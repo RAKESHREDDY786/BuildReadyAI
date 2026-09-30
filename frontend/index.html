@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BuildReady-AI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="main-container">
+    <h1>BuildReady-AI</h1>
+    <p class="subtitle">Turn your engineering path and ideas into a build-ready project plan and personalized roadmap.</p>
+
+    <h2>Choose Your Path</h2>
+    <div class="path-container">
+        <button class="path-card" data-path="AI / ML">
+            🤖 AI / ML
+        </button>
+        <button class="path-card" data-path="Data Science">
+            📊 Data Science
+        </button>
+        <button class="path-card" data-path="Software Development">
+            💻 Software Development
+        </button>
+        <button class="path-card" data-path="Web Development">
+            🌐 Web Development
+        </button>
+        <button class="path-card" data-path="Cybersecurity">
+            🔐 Cybersecurity
+        </button>
+        <button class="path-card" data-path="ECE / IoT">
+            📡 ECE / IoT
+        </button>
+        <button class="path-card" data-path="Electrical / EEE">
+            ⚡ Electrical / EEE
+        </button>
+        <button class="path-card" data-path="Mechanical">
+            ⚙️ Mechanical
+        </button>
+        <button class="path-card" data-path="Civil">
+            🏗️ Civil
+        </button>
+        <button class="path-card" data-path="Chemical">
+            🧪 Chemical
+        </button>
+        <button class="path-card" data-path="Biotechnology">
+            🧬 Biotechnology
+        </button>
+        <button class="path-card" data-path="Other">
+            ➕ Other
+        </button>
+    </div>
+
+    <h2>Choose Your Level</h2>
+    <div class="level-container">
+        <button class="level-card" data-level="Beginner">
+            🌱 Beginner
+        </button>
+        <button class="level-card" data-level="Intermediate">
+            🚀 Intermediate
+        </button>
+        <button class="level-card" data-level="Advanced">
+            🧠 Advanced
+        </button>
+    </div>
+
+    <h2>What do you want to do?</h2>
+    <div class="goal-container">
+        <button class="goal-card" data-goal="Learn the Domain">
+            📚 Learn the Domain
+        </button>
+        <button class="goal-card" data-goal="Build a Project">
+            💡 Build a Project
+        </button>
+    </div>
+
+    <h2>Choose Your Domain / Topic</h2>
+    <div id="domainContainer" class="domain-container">
+        <!-- Domains will appear dynamically based on selected path -->
+    </div>
+
+    <div id="otherPathSection" hidden>
+        <h3>What field or topic do you want to learn?</h3>
+        <input
+            id="otherPathInput"
+            type="text"
+            placeholder="Example: Aerospace, Robotics Hardware, Financial Engineering, UI/UX"
+        >
+    </div>
+
+    <textarea
+        id="projectIdea"
+        placeholder="Describe what you want to learn or build..."
+    ></textarea>
+
+    <div class="button-row">
+        <button id="buildBtn" type="button">Create Learning Roadmap</button>
+        <button id="clearSavedPlanBtn" type="button" hidden>Clear Saved Plan</button>
+    </div>
+
+    <div id="result"></div>
+
+    <section class="chatbot-section">
+        <h2>💬 Ask BuildReady</h2>
+        <p id="chatContext">
+            Choose your path, domain, goal, and level, then ask a question.
+        </p>
+
+        <div id="chatMessages" class="chat-messages">
+            <div class="chat-message bot-message">
+                <strong>BuildReady:</strong>
+                Hi! I am your engineering mentor. Choose your path and goal above, or ask me any question about what to learn or build!
+            </div>
+        </div>
+
+        <div class="chat-input-row">
+            <input
+                id="chatInput"
+                type="text"
+                placeholder="Example: Explain Python functions simply, or what should I learn next?"
+            >
+            <button id="chatSendBtn" type="button">
+                Send
+            </button>
+        </div>
+    </section>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
