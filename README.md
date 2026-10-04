@@ -56,12 +56,16 @@ Activate your Python virtual environment and run Uvicorn:
 .\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8000
 ```
 - Open Swagger API documentation at: **http://127.0.0.1:8000/docs**
-- Backend root check: **http://127.0.0.1:8000/**
+- Open the app directly from FastAPI at: **http://127.0.0.1:8000/**
+- For Live Server development, use: **http://127.0.0.1:5500/frontend/index.html**
 
-### 3. Open the Frontend
-Open the frontend using VS Code Live Server or any static web server:
-- URL: **http://127.0.0.1:5500/frontend/index.html**
-- The local API base URL is set in `frontend/config.js`. Change `apiBaseUrl` there for deployment; configure the matching frontend origin in backend `CORS_ALLOW_ORIGINS`.
+### 3. Deploy from GitHub with Vercel
+1. Import the existing `RAKESHREDDY786/BuildReadyAI` repository in Vercel and keep the project root set to the repository root.
+2. Add `GEMINI_API_KEY` as a Vercel environment variable for Production and Preview. Enter the key in Vercel only; never commit it.
+3. Deploy the `main` branch. FastAPI serves the app at `/`, the API on the same origin, and API documentation at `/docs`.
+4. The frontend automatically uses the same origin when hosted, so a separate public backend URL or CORS allowlist is not needed for the Vercel deployment. On localhost it continues to call `http://127.0.0.1:8000`.
+
+For a local FastAPI deployment, set `GEMINI_API_KEY` in `backend/.env` or the root `.env`. Keep both `.env` files out of Git.
 
 ---
 
@@ -80,4 +84,4 @@ The plan, assessment, evaluation, and chat requests support an optional `technol
 
 - Plan, assessment, and progress persistence is browser-local; there is no database or cross-device account storage.
 - AI endpoints require a valid Gemini API key and network access to the configured Gemini models.
-- For deployment, set `frontend/config.js` to the deployed backend URL, set `CORS_ALLOW_ORIGINS` to the deployed frontend origin(s), and provide `GEMINI_API_KEY` only to the backend environment. Keep local origins out of production CORS configuration.
+- Vercel deployments use browser-local progress and need a configured `GEMINI_API_KEY` environment variable. Keep the key in Vercel settings, not in frontend files or Git.

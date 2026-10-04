@@ -7,6 +7,8 @@ from typing import List, Literal, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from google import genai
 from pydantic import BaseModel, Field, model_validator
 
@@ -15,6 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 # -----------------------------
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BASE_DIR.parent
+FRONTEND_DIR = ROOT_DIR / "frontend"
 
 load_dotenv(BASE_DIR / ".env")
 load_dotenv(ROOT_DIR / ".env")
@@ -28,6 +31,8 @@ app = FastAPI(
     description="Backend API for BuildReady-AI: Verified Learning, Roadmap & Progress System",
     version="2.0.0"
 )
+
+app.mount("/frontend", StaticFiles(directory=FRONTEND_DIR), name="frontend")
 
 logger = logging.getLogger(__name__)
 
@@ -502,11 +507,7 @@ def call_gemini_with_fallback(client: genai.Client, contents: str, config: dict)
 # -----------------------------
 @app.get("/")
 def home():
-    return {
-        "message": "BuildReady-AI backend is running!",
-        "status": "online",
-        "docs_url": "/docs"
-    }
+    return FileResponse(FRONTEND_DIR / "index.html")
 
 
 @app.get("/health")
@@ -1056,3 +1057,6 @@ MENTOR GUIDELINES & ROADMAP INTERACTION:
         raise
     except Exception as error:
         raise_ai_error(error, "Ask BuildReady")
+
+
+app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="frontend-assets")

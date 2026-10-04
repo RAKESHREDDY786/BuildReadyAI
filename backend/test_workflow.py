@@ -513,6 +513,17 @@ class BuildReadyWorkflowTests(unittest.TestCase):
         return patch.object(api, "call_gemini_with_fallback", side_effect=respond)
 
     def test_health_and_request_validation(self):
+        home = self.client.get("/")
+        self.assertEqual(home.status_code, 200)
+        self.assertIn("BuildReady-AI", home.text)
+        frontend_styles = self.client.get("/style.css")
+        self.assertEqual(frontend_styles.status_code, 200)
+        frontend_script = self.client.get("/script.js")
+        self.assertEqual(frontend_script.status_code, 200)
+        self.assertIn("apiBaseUrl", frontend_script.text)
+        frontend_config = self.client.get("/config.js")
+        self.assertEqual(frontend_config.status_code, 200)
+
         health = self.client.get("/health")
         self.assertEqual(health.status_code, 200)
         self.assertIn("gemini_configured", health.json())
