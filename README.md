@@ -4,15 +4,16 @@
 
 BuildReady-AI is an engineering-aware mentor designed for students and hackathon participants. Instead of generic chatbot responses, BuildReady-AI structures guidance by:
 
-**Engineering Path → Relevant Domain → Project / Learning Goal → Project-Specific Skills → Personalized Roadmap → Contextual AI Guidance**
+**Engineering Path → Mode → Specific Goal → Required Skills → Personalized Roadmap → Assessment → Verified Progress**
 
 ---
 
 ## 🌟 Key Features
 
 1. **Branch-Aware Engineering Paths**:
-   - Supports 12 distinct paths: AI / ML, Data Science, Software Development, Web Development, Cybersecurity, ECE / IoT, Electrical / EEE, Mechanical, Civil, Chemical, Biotechnology, and custom ("Other").
-   - Each branch displays its own tailored domains rather than generic AI/ML lists.
+   - Includes AIML, AI, CSE, Data Science, Software Development, Web Development, Cybersecurity, ECE / IoT, Electrical / EEE, Mechanical, Civil, Chemical, Biotechnology, and custom ("Other").
+   - Each branch displays its own tailored domains and a dependent Technology / Topic Focus selector. AIML includes a dedicated Data Structures & Algorithms domain, language choices, SQL, and Git/GitHub; CSE and related paths expose Java, JavaScript, C, C++, C#, Python, SQL, Git, and GitHub; Web Development exposes HTML, CSS, and JavaScript.
+   - The selected Domain determines the curriculum; Technology / Topic Focus determines the language, tools, or notation used within that curriculum. Free-text goals provide context only and cannot replace either selection (for example, choosing DSA with Python selected still teaches DSA in Python, while choosing DSA with a language-neutral focus uses pseudocode).
 
 2. **Adaptive Student Levels**:
    - **Beginner**: Prerequisites, foundational concepts, step-by-step small exercises.
@@ -20,15 +21,18 @@ BuildReady-AI is an engineering-aware mentor designed for students and hackathon
    - **Advanced**: Scalability, optimization, system design, and production implementations.
 
 3. **Two Tailored Modes**:
-   - **Learn the Domain**: Step-by-step progressive learning stages, milestones, and curated free resources.
-   - **Build a Project**: Project-specific skills analysis (required, recommended, learning order, tech stack, MVP plan, innovation ideas, and demo/deployment guide).
+   - **Learn the Domain**: Step-by-step progressive learning stages, milestones, and curated free resources for the selected technology/topic, not Python by default.
+   - **Build a Project**: Project-specific skills analysis (required, recommended, learning order, tech stack, MVP plan, innovation ideas, and demo/deployment guide) constrained by the selected technology/topic.
 
-4. **Interactive Progress Tracking**:
-   - Task checklists with real-time percentage indicators (progress bar and circular dial).
-   - Saved state in `localStorage` with a "Clear Saved Plan" option.
-
+4. **Assessment-Verified Progress**:
+   - Each task presents a structured, task-specific lesson: concept introduction and explanation, why it matters, prerequisites, analogy, detailed teaching, key concepts and syntax, multiple line-explained examples, mistake corrections, progressive beginner/intermediate practice, real-world application, an assignment, and a mini challenge before its quiz.
+   - Example code and its explanation are stored as paired line objects, so displayed code lines cannot drift out of alignment with their explanations.
+   - Roadmap tasks use `NOT_STARTED`, `IN_PROGRESS`, `NEEDS_PRACTICE`, and `VERIFIED` statuses. Passing a task quiz marks it completed and unlocks the next task; passing all task quizzes displays a roadmap completion banner.
+   - The quiz is based on the taught task concepts and choices are included during answer evaluation; a passing result verifies the task and unlocks the next one.
+   - The progress bar, circular graph, and status counts are calculated from verified task statuses.
+   - Roadmaps, generated assessments, assessment results, and statuses are saved in browser `localStorage`.
 5. **Ask BuildReady (Contextual AI Mentor)**:
-   - Built-in mentor assistant powered by Google Gemini that understands the student's selected branch, domain, level, goal, and project.
+   - Built-in mentor assistant powered by Google Gemini that receives the student's branch, domain, level, goal, task statuses, and recent assessment results.
 
 ---
 
@@ -38,17 +42,18 @@ BuildReady-AI is an engineering-aware mentor designed for students and hackathon
 Ensure your `.env` file exists in `backend/.env` (or in the root directory):
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
+CORS_ALLOW_ORIGINS=http://localhost:5500,http://127.0.0.1:5500
 ```
-*(A template is provided in `.env.example`)*
+Templates are provided in the root and backend `.env.example` files. Never put the Gemini key in frontend files.
 
 ### 2. Start the Backend
 Activate your Python virtual environment and run Uvicorn:
 ```powershell
 # From project root:
-uvicorn main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
 
 # Or using the backend module path:
-uvicorn backend.main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8000
 ```
 - Open Swagger API documentation at: **http://127.0.0.1:8000/docs**
 - Backend root check: **http://127.0.0.1:8000/**
@@ -56,6 +61,7 @@ uvicorn backend.main:app --reload --port 8000
 ### 3. Open the Frontend
 Open the frontend using VS Code Live Server or any static web server:
 - URL: **http://127.0.0.1:5500/frontend/index.html**
+- The local API base URL is set in `frontend/config.js`. Change `apiBaseUrl` there for deployment; configure the matching frontend origin in backend `CORS_ALLOW_ORIGINS`.
 
 ---
 
@@ -64,4 +70,14 @@ Open the frontend using VS Code Live Server or any static web server:
 - `GET /` — Backend status check
 - `GET /health` — Health check and Gemini configuration status
 - `POST /generate-plan` — Generates a personalized structured learning roadmap or project plan
+- `POST /generate-assessment` — Creates 3–5 assessment questions for one roadmap task
+- `POST /evaluate-assessment` — Evaluates answers and returns a score, feedback, and verified/practice-needed status
 - `POST /chat` — Context-aware AI mentoring via Ask BuildReady
+
+The plan, assessment, evaluation, and chat requests support an optional `technology` field. Existing API callers that omit it remain compatible; the selected domain is used as the focus, except DSA defaults to language-neutral pseudocode. Add selector choices in `frontend/script.js` (`pathDomains` and `technologyOptionsByDomain`); add a syntax signature to `TECHNOLOGY_EXAMPLE_REQUIREMENTS` in `backend/main.py` when the new choice has recognizable example syntax. This keeps extension work configuration-driven and protects the existing learning workflow.
+
+## Current MVP Limits and Deployment
+
+- Plan, assessment, and progress persistence is browser-local; there is no database or cross-device account storage.
+- AI endpoints require a valid Gemini API key and network access to the configured Gemini models.
+- For deployment, set `frontend/config.js` to the deployed backend URL, set `CORS_ALLOW_ORIGINS` to the deployed frontend origin(s), and provide `GEMINI_API_KEY` only to the backend environment. Keep local origins out of production CORS configuration.

@@ -1,14 +1,14 @@
 import os
+import logging
 import re
-import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 # -----------------------------
 # Secure environment loading
@@ -29,11 +29,149 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Configure CORS
+logger = logging.getLogger(__name__)
+
+TECHNOLOGY_EXAMPLE_REQUIREMENTS = {
+    "python": r"\b(?:print\s*\(|def\s+\w+|import\s+\w+)",
+    "java": r"\bSystem\.out\.(?:print|println)\s*\(|\bpublic\s+class\b",
+    "javascript": r"\bconsole\.log\s*\(|\b(?:const|let|var)\s+\w+|\bfunction\s+\w+",
+    "c": r"#include\s*<stdio\.h>|\bprintf\s*\(|\bint\s+main\s*\(",
+    "c++": r"#include\s*<iostream>|\bstd::|\bcout\s*<<|\bint\s+main\s*\(",
+    "c#": r"\bConsole\.(?:WriteLine|Write)\s*\(|\busing\s+System\b",
+    "sql": r"\b(?:SELECT|CREATE\s+TABLE|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b",
+    "git": r"\bgit\s+(?:init|status|add|commit|log|branch|switch|merge|push|pull|clone)\b",
+    "github": r"\bgithub\b|\bgh\s+(?:repo|pr)\b|\bgit\s+push\b|\bpull\s+request\b",
+    "html": r"<!doctype\s+html|<html\b|<(?:head|body|h[1-6]|form|a)\b",
+    "css": r"(?:\{[^}]*\b[a-z-]+\s*:\s*[^;}]+;|(?:^|\n)\s*[.#]?[a-z][\w-]*\s*\{)",
+}
+
+PYTHON_ONLY_EXAMPLE_SYNTAX = re.compile(
+    r"(?m)^\s*def\s+\w+|(?<![\w.])print\s*\(|\belif\b|\bNone\b"
+    r"|\bimport\s+(?:numpy|pandas|math|re|collections)\b"
+)
+DSA_CURRICULUM_TERMS = re.compile(
+    r"\b(?:data structures?|algorithms?|complexit(?:y|ies)|big[- ]?o|"
+    r"arrays?|strings?|search(?:ing)?|sort(?:ing)?|recursion|"
+    r"linked lists?|stacks?|queues?|trees?|graphs?|hash(?:ing| tables?)|"
+    r"dynamic programming|greedy|two pointers?|sliding windows?)\b",
+    flags=re.IGNORECASE,
+)
+PYTHON_FUNDAMENTALS_TERMS = re.compile(
+    r"\b(?:python fundamentals?|variables?|operators?|conditionals?|if[- ]else|"
+    r"loops?|functions?|lists and dictionaries|collections?|file handling|"
+    r"exceptions?|basic syntax|mini project)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def validate_plan_technology_examples(plan: "ProjectPlan", technology: str) -> None:
+    """Reject generated example code that contradicts an explicit technology selection."""
+    selected = technology.strip().casefold()
+    if selected not in TECHNOLOGY_EXAMPLE_REQUIREMENTS and selected != "language-agnostic":
+        return
+
+    example_lines = [
+        line.content
+        for task in plan.tasks
+        for example in [task.primary_example, *task.additional_examples]
+        for line in example.lines
+    ]
+    examples = "\n".join(example_lines)
+    if not examples:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The generated roadmap did not include examples for selected {technology}. Please try again.",
+        )
+
+    required_pattern = TECHNOLOGY_EXAMPLE_REQUIREMENTS.get(selected)
+    if required_pattern and not re.search(required_pattern, examples, flags=re.IGNORECASE):
+        raise HTTPException(
+            status_code=502,
+            detail=f"The generated examples did not match selected {technology}. Please generate the roadmap again.",
+        )
+
+    if selected != "python" and PYTHON_ONLY_EXAMPLE_SYNTAX.search(examples):
+        raise HTTPException(
+            status_code=502,
+            detail=f"The generated examples included Python-specific syntax instead of selected {technology}. Please generate the roadmap again.",
+        )
+
+
+def validate_plan_curriculum(
+    plan: "ProjectPlan",
+    domain: str,
+) -> None:
+    """Reject a generic Python course when it does not match the selected curriculum."""
+    normalized_domain = re.sub(r"[^a-z]", "", domain.casefold())
+    task_text = [
+        " ".join(
+            filter(
+                None,
+                [
+                    task.title,
+                    task.description,
+                    task.learning_objective or "",
+                    task.verification_focus or "",
+                    task.detailed_explanation,
+                    *task.key_concepts,
+                ],
+            )
+        )
+        for task in plan.tasks
+    ]
+    if normalized_domain in {"dsa", "datastructuresalgorithms"}:
+        matching_tasks = [
+            text for text in task_text if DSA_CURRICULUM_TERMS.search(text)
+        ]
+        distinct_concepts = {
+            match.group(0).casefold()
+            for text in task_text
+            for match in DSA_CURRICULUM_TERMS.finditer(text)
+        }
+        if len(matching_tasks) < min(6, len(plan.tasks)) or len(distinct_concepts) < 5:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "The generated roadmap did not cover Data Structures & Algorithms. "
+                    "Please try generating it again."
+                ),
+            )
+
+    valid_python_curriculum = normalized_domain in {
+        "python",
+        "programmingfundamentals",
+        "programminglanguages",
+    }
+    if not valid_python_curriculum:
+        python_fundamentals_tasks = sum(
+            bool(PYTHON_FUNDAMENTALS_TERMS.search(" ".join(
+                filter(None, [task.title, task.description, task.learning_objective or ""])
+            )))
+            for task in plan.tasks
+        )
+        if python_fundamentals_tasks >= min(6, len(plan.tasks)):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"The generated roadmap substituted Python fundamentals for the selected "
+                    f"{domain} curriculum. Please try generating it again."
+                ),
+            )
+
+
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:5500,http://127.0.0.1:5500,http://localhost:3000,http://127.0.0.1:3000,null",
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -64,6 +202,7 @@ class ProjectRequest(BaseModel):
     idea: Optional[str] = ""
     path: str
     domain: str
+    technology: Optional[str] = ""
     goal: str
     level: str
 
@@ -78,14 +217,61 @@ class LearningResource(BaseModel):
     topic: str
     resource_name: str
     resource_type: str
+    url: Optional[str] = ""
+
+
+class LessonExampleLine(BaseModel):
+    content: str = Field(min_length=1, pattern=r"^[^\r\n]+$")
+    explanation: str = Field(min_length=8)
+
+
+class LessonExample(BaseModel):
+    title: str = Field(min_length=3, max_length=80)
+    lines: List[LessonExampleLine] = Field(min_length=1, max_length=12)
+
+
+class LessonMistakeCorrection(BaseModel):
+    mistake: str = Field(min_length=8)
+    correction: str = Field(min_length=8)
 
 
 class Task(BaseModel):
     id: int
     title: str
     description: str
-    status: str = "NOT_STARTED"  # NOT_STARTED, IN_PROGRESS, NEEDS_PRACTICE, VERIFIED
+    status: Literal["NOT_STARTED", "IN_PROGRESS", "NEEDS_PRACTICE", "VERIFIED"] = "NOT_STARTED"
     verification_focus: Optional[str] = ""
+    learning_objective: Optional[str] = ""
+    concept_introduction: str = Field(min_length=20)
+    why_learn: str = Field(min_length=12)
+    lesson_prerequisites: List[str] = Field(min_length=1, max_length=5)
+    real_world_analogy: str = Field(min_length=20)
+    detailed_explanation: str = Field(min_length=80)
+    key_concepts: List[str] = Field(min_length=2, max_length=6)
+    simple_explanation: str = Field(min_length=20)
+    syntax_rules: List[str] = Field(min_length=1, max_length=5)
+    primary_example: LessonExample
+    small_example: str = ""
+    example_explanation: List[str] = Field(default_factory=list)
+    additional_examples: List[LessonExample] = Field(min_length=1, max_length=2)
+    real_world_example: str = Field(min_length=15)
+    common_mistakes: List[str] = Field(min_length=1, max_length=5)
+    mistake_corrections: List[LessonMistakeCorrection] = Field(min_length=1, max_length=5)
+    learning_outcome: str = Field(min_length=12)
+    practical_exercise: Optional[str] = ""
+    assignment: str = Field(min_length=15)
+    beginner_practice: str = Field(min_length=15)
+    intermediate_practice: str = Field(min_length=15)
+    real_world_application: str = Field(min_length=20)
+    mini_challenge: str = Field(min_length=15)
+    resources: List[str] = Field(default_factory=list)
+    estimated_difficulty: Optional[str] = ""
+
+    @model_validator(mode="after")
+    def sync_legacy_example_fields(self):
+        self.small_example = "\n".join(line.content for line in self.primary_example.lines)
+        self.example_explanation = [line.explanation for line in self.primary_example.lines]
+        return self
 
 
 class ProjectPlan(BaseModel):
@@ -113,6 +299,7 @@ class AssessmentQuestion(BaseModel):
     question: str
     question_type: str  # "concept", "code_or_query", "troubleshooting", "design", "output_prediction"
     hint: Optional[str] = ""
+    options: List[str] = Field(default_factory=list)
 
 
 class TopicAssessment(BaseModel):
@@ -130,15 +317,38 @@ class GenerateAssessmentRequest(BaseModel):
     topic_description: str
     path: str
     domain: str
+    technology: Optional[str] = ""
     level: str
     goal: str
     idea: Optional[str] = ""
+    verification_focus: Optional[str] = ""
+    learning_objective: Optional[str] = ""
+    concept_introduction: Optional[str] = ""
+    lesson_prerequisites: List[str] = Field(default_factory=list)
+    real_world_analogy: Optional[str] = ""
+    detailed_explanation: Optional[str] = ""
+    real_world_example: Optional[str] = ""
+    key_concepts: List[str] = Field(default_factory=list)
+    simple_explanation: Optional[str] = ""
+    small_example: Optional[str] = ""
+    example_explanation: List[str] = Field(default_factory=list)
+    additional_examples: List[LessonExample] = Field(default_factory=list)
+    common_mistakes: List[str] = Field(default_factory=list)
+    mistake_corrections: List[LessonMistakeCorrection] = Field(default_factory=list)
+    practical_exercise: Optional[str] = ""
+    assignment: Optional[str] = ""
+    beginner_practice: Optional[str] = ""
+    intermediate_practice: Optional[str] = ""
+    real_world_application: Optional[str] = ""
+    mini_challenge: Optional[str] = ""
+    related_skills: List[str] = Field(default_factory=list)
 
 
 class AnswerSubmission(BaseModel):
     question_id: int
     question: str
     user_answer: str
+    options: List[str] = Field(default_factory=list)
 
 
 class EvaluateAssessmentRequest(BaseModel):
@@ -147,40 +357,78 @@ class EvaluateAssessmentRequest(BaseModel):
     topic_description: str
     path: str
     domain: str
+    technology: Optional[str] = ""
     level: str
     goal: str
     idea: Optional[str] = ""
-    submissions: List[AnswerSubmission]
+    learning_objective: Optional[str] = ""
+    concept_introduction: Optional[str] = ""
+    lesson_prerequisites: List[str] = Field(default_factory=list)
+    real_world_analogy: Optional[str] = ""
+    detailed_explanation: Optional[str] = ""
+    real_world_example: Optional[str] = ""
+    key_concepts: List[str] = Field(default_factory=list)
+    simple_explanation: Optional[str] = ""
+    small_example: Optional[str] = ""
+    example_explanation: List[str] = Field(default_factory=list)
+    additional_examples: List[LessonExample] = Field(default_factory=list)
+    common_mistakes: List[str] = Field(default_factory=list)
+    mistake_corrections: List[LessonMistakeCorrection] = Field(default_factory=list)
+    practical_exercise: Optional[str] = ""
+    assignment: Optional[str] = ""
+    beginner_practice: Optional[str] = ""
+    intermediate_practice: Optional[str] = ""
+    real_world_application: Optional[str] = ""
+    mini_challenge: Optional[str] = ""
+    submissions: List[AnswerSubmission] = Field(min_length=3, max_length=5)
+
+
+class QuestionEvaluation(BaseModel):
+    question_id: int
+    correct: bool
+    feedback: str
+    explanation: str
 
 
 class AssessmentEvaluation(BaseModel):
     topic_id: int
-    status: str  # "VERIFIED" or "NEEDS_PRACTICE"
+    status: Literal["VERIFIED", "NEEDS_PRACTICE"]
     passed: bool
-    score: int  # 0 to 100
+    score: int = Field(ge=0, le=100)
     overall_feedback: str
     strengths: List[str]
     weak_areas: List[str]
     targeted_practice: str
     next_step: str
+    question_results: List[QuestionEvaluation] = Field(default_factory=list)
 
 
 # --- Chat Models ---
 class TopicState(BaseModel):
     id: int
     title: str
-    status: str = "NOT_STARTED"
+    status: Literal["NOT_STARTED", "IN_PROGRESS", "NEEDS_PRACTICE", "VERIFIED"] = "NOT_STARTED"
+
+
+class AssessmentState(BaseModel):
+    topic_id: int
+    score: int
+    status: Literal["VERIFIED", "NEEDS_PRACTICE"]
+    overall_feedback: str
+    weak_areas: List[str] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):
     message: str
     path: Optional[str] = "General Engineering"
     domain: Optional[str] = "General"
+    technology: Optional[str] = ""
     goal: Optional[str] = "Learn the Domain"
     level: Optional[str] = "Beginner"
     idea: Optional[str] = ""
     current_topic: Optional[str] = ""
-    topics: Optional[List[TopicState]] = []
+    topics: List[TopicState] = Field(default_factory=list)
+    assessment_results: List[AssessmentState] = Field(default_factory=list)
 
 
 class TopicUpdate(BaseModel):
@@ -199,7 +447,7 @@ class ChatResponse(BaseModel):
 # -----------------------------
 def raise_ai_error(error: Exception, feature_name: str):
     error_text = str(error)
-    print(f"[{feature_name}] AI Error:", repr(error))
+    logger.error("%s AI request failed (%s).", feature_name, type(error).__name__)
 
     if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
         raise HTTPException(
@@ -217,9 +465,14 @@ def raise_ai_error(error: Exception, feature_name: str):
             detail="Selected AI model is currently unavailable. Please try again."
         )
 
+    if "401" in error_text or "403" in error_text or "API_KEY_INVALID" in error_text:
+        raise HTTPException(
+            status_code=503,
+            detail="The AI service rejected its credentials. Check the backend Gemini API key configuration."
+        )
     raise HTTPException(
-        status_code=500,
-        detail=f"An error occurred while contacting the AI service: {str(error)}"
+        status_code=502,
+        detail=f"{feature_name} could not complete the AI request. Please try again shortly."
     )
 
 
@@ -234,7 +487,7 @@ def call_gemini_with_fallback(client: genai.Client, contents: str, config: dict)
             )
         except Exception as e:
             err_msg = str(e)
-            print(f"Model {model_name} failed: {err_msg}")
+            logger.warning("Gemini model %s failed; trying the next configured model.", model_name)
             last_error = e
             if "404" in err_msg or "503" in err_msg or "NOT_FOUND" in err_msg or "UNAVAILABLE" in err_msg:
                 continue
@@ -260,7 +513,10 @@ def home():
 def health():
     return {
         "status": "healthy",
-        "gemini_configured": bool(os.getenv("GEMINI_API_KEY"))
+        "gemini_configured": bool(
+            os.getenv("GEMINI_API_KEY")
+            and os.getenv("GEMINI_API_KEY").strip() not in ("", "your_key_here", "MY_REAL_KEY")
+        )
     }
 
 
@@ -273,23 +529,41 @@ def generate_plan(request: ProjectRequest):
 
     is_learning = "learn" in request.goal.lower()
     user_idea = (request.idea or "").strip()
+    normalized_domain = re.sub(r"[^a-z]", "", request.domain.casefold())
+    selected_focus = (request.technology or "").strip() or (
+        "Language-agnostic"
+        if normalized_domain in {"dsa", "datastructuresalgorithms"}
+        else request.domain
+    )
 
     if is_learning:
         mode_instructions = f"""
 MODE: LEARN THE DOMAIN (Personalized Adaptive Learning Roadmap)
 - The student wants to master the domain '{request.domain}' in branch '{request.path}' at level '{request.level}'.
+- Selected technology/topic focus: '{selected_focus}'.
 - Student's specific focus: "{user_idea if user_idea else 'Master this subject from fundamentals to practical mastery.'}"
+- The selected domain defines the curriculum; the selected technology/topic focus refines its language, tools, or notation. Student Input is only a goal/application hint and must not replace either selection.
+- The selected domain determines the curriculum. The selected technology/topic determines the language, tools, or notation used to teach and practice that curriculum; it must not replace the domain with a generic course (for example, DSA with Python means DSA concepts implemented in Python, not Python fundamentals).
+- Make at least 6 task titles and learning objectives name distinct concepts from the selected domain. A roadmap of generic programming fundamentals is invalid unless the selected domain is Programming Fundamentals or a programming language.
+- For Data Structures & Algorithms, progress through algorithm analysis and Big-O, arrays/strings, searching and sorting, linked lists, stacks/queues, trees/graphs, hashing, and recursion or dynamic programming. Use language-neutral pseudocode when the selected technology is Language-agnostic.
 - Generate 8 to 12 progressive, step-by-step topics/milestones in 'tasks':
   * Set status='NOT_STARTED' for all tasks.
-  * In 'verification_focus', specify what practical or conceptual skill must be verified for that topic.
-  * For Beginners: start with foundational principles, syntax/concepts, and small practical exercises.
+  * Structure each lesson from understanding to application: include 'concept_introduction' (define the concept and its place in the subject), 'simple_explanation' (what it means in everyday beginner language), 'why_learn', 1-5 task-specific 'lesson_prerequisites' (or explicitly state that none are needed), and a memorable 'real_world_analogy'.
+  * Use 'detailed_explanation' to teach how the concept works and when it is useful. For programming, introduce relevant value types, syntax, naming/usage rules, and behavior rather than assuming prior knowledge. Keep this focused and readable, usually 2-4 short paragraphs rather than a textbook chapter.
+  * Keep lessons substantial but focused (roughly 120-220 words before examples and practice); do not pad them with repeated definitions. Teach the selected technology/topic, not Python by default. Use Python-specific content only when the selected technology/topic is Python or the selected domain genuinely requires Python.
+  * Include 2-6 task-specific 'key_concepts' and 1-5 actionable 'syntax_rules'. Provide a 'primary_example' with a title and a 'lines' array; each line object must contain exactly one 'content' line and its paired 'explanation'. Provide 1-2 distinct 'additional_examples' in the same structured format. This pairing makes line-by-line explanations exact by construction.
+  * Include a project/goal-specific 'real_world_example' and 'real_world_application'. Provide 1-5 'mistake_corrections', each pairing a likely mistake with a clear correction; include the same key pitfalls concisely in 'common_mistakes'. Include a measurable 'learning_outcome'.
+  * Provide progressive practice: 'beginner_practice' with guided first steps, 'intermediate_practice' that transfers or combines ideas, and a 'mini_challenge' completed without step-by-step directions. Retain 'practical_exercise' as a concise summary of that progression. Include task-specific 'resources' and 'estimated_difficulty'.
+  * Include a distinct actionable task-specific 'assignment'. Include useful official documentation/tutorial URLs in task 'resources' when known; never invent URLs.
+  * In 'verification_focus', specify exactly what practical or conceptual skill must be verified for that topic.
+  * For Beginners: introduce every prerequisite and technical term before relying on it; begin from first principles and explain every example line.
   * For Intermediates: focus on practical implementation, patterns, tooling, and real-world scenarios.
   * For Advanced: focus on architecture, performance, edge cases, and production standards.
 - In 'skills_required': specify core skills with priorities.
 - In 'learning_order': list the sequential order of topics (Topic 1 -> Topic 2 -> Topic 3).
 - In 'recommended_projects': list 3 progressive mini-projects.
 - In 'prerequisites': what the student needs before starting.
-- In 'learning_resources': official documentation, recognized tutorials (no invented URLs).
+- In 'learning_resources': official documentation and recognized tutorials, including a valid official URL when known; never invent URLs.
 - In 'tech_stack': tools, software, or libraries.
 - In 'mvp_plan': core milestones for domain proficiency.
 - In 'next_steps': immediate first action.
@@ -298,10 +572,21 @@ MODE: LEARN THE DOMAIN (Personalized Adaptive Learning Roadmap)
         mode_instructions = f"""
 MODE: BUILD A PROJECT (Verified Project Milestones & Skills)
 - The student is in branch '{request.path}', domain '{request.domain}', level '{request.level}'.
+- Selected technology/topic focus: '{selected_focus}'.
 - Project goal/idea: "{user_idea if user_idea else 'Suggest a high-impact, realistic project for this domain.'}"
+- The selected domain determines the project curriculum and the selected technology/topic determines implementation syntax/tools. Student Input describes the project to support and must not cause an unrelated language or domain switch.
+- Make at least 6 task titles and learning objectives name distinct concepts from the selected domain. Do not substitute a generic Python course for the selected domain.
+- For Data Structures & Algorithms, include algorithm analysis and Big-O, arrays/strings, searching and sorting, linked lists, stacks/queues, trees/graphs, hashing, and recursion or dynamic programming. Use language-neutral pseudocode when the selected technology is Language-agnostic.
 - Generate 8 to 12 realistic implementation milestones in 'tasks':
   * Set status='NOT_STARTED' for all tasks.
-  * In 'verification_focus', specify what implementation, circuit, code, or testing must be verified for that milestone.
+  * Give every milestone the same structured teaching: 'concept_introduction', beginner-friendly 'simple_explanation', project-specific 'why_learn', 1-5 'lesson_prerequisites' (or explicitly state none), a memorable 'real_world_analogy', and a focused 'detailed_explanation' that teaches before asking the learner to implement.
+  * Keep teaching substantial but focused (roughly 120-220 words before examples and practice); do not pad with repeated definitions. Teach the selected technology/topic, not Python by default. Use Python-specific content only when the selected technology/topic is Python or the project explicitly requires Python.
+  * Include 2-6 task-specific 'key_concepts', 'syntax_rules', a 'primary_example' with a title and a 'lines' array of paired 'content' and 'explanation' entries, and 1-2 distinct 'additional_examples' with the same structured format. Each entry represents one displayed example line and its explanation.
+  * Include project-specific 'real_world_example' and 'real_world_application'. Add 1-5 'mistake_corrections' pairing likely errors with actionable fixes, a concise 'common_mistakes' list, and a measurable 'learning_outcome'.
+  * Sequence work as 'beginner_practice' (guided), 'intermediate_practice' (less guided and combines ideas), then 'mini_challenge' (independent application). Retain a concise 'practical_exercise' summary and include task-specific 'resources' and 'estimated_difficulty'.
+  * Include a distinct actionable task-specific 'assignment'. Include useful official documentation/tutorial URLs in task 'resources' when known; never invent URLs.
+  * Teach the knowledge required for each code, hardware, design, or testing milestone; do not assume a complete beginner already knows unintroduced terms.
+  * In 'verification_focus', specify exactly what implementation, circuit, code, or testing must be verified for that milestone.
 - In 'skills_required': EXACT skills needed specifically to build THIS project.
 - In 'learning_order': step-by-step order to learn needed skills.
 - In 'prerequisites': prerequisite concepts or hardware setup.
@@ -319,6 +604,7 @@ You are BuildReady-AI, an expert engineering mentor and verified learning system
 Student Context:
 - Engineering Path: {request.path}
 - Selected Domain: {request.domain}
+- Selected Technology/Topic: {selected_focus}
 - Student Level: {request.level}
 - Goal Type: {request.goal}
 - Student Input: {user_idea if user_idea else 'None specified'}
@@ -326,11 +612,15 @@ Student Context:
 {mode_instructions}
 
 CRITICAL RULES:
-1. Be strictly branch-aware: ECE/IoT must focus on circuits, microcontrollers, embedded C/C++, sensors; Mechanical on CAD, kinematics, thermodynamics; Civil on structures, materials, GIS; Software/Web/AI on their respective stacks. Never confuse branches!
-2. Adapt depth strictly to '{request.level}' level.
-3. Every task in 'tasks' must have an integer id (1, 2, 3...) and status 'NOT_STARTED'.
-4. Do not hallucinate URLs.
-5. All fields must be informative and practical.
+1. The selected Domain determines the curriculum; the selected Technology/Topic determines implementation syntax/tools within that curriculum. Student Input is context only and cannot replace either selection. Domain=Data Structures & Algorithms with Student Input='I want to learn Python' remains a DSA roadmap; with Technology=Java use Java examples for DSA, with Technology=Python use Python examples for DSA, and with Technology=Language-agnostic use language-neutral explanations and pseudocode rather than defaulting to Python.
+2. Be strictly branch-aware: use the selected scope and relevant branch context. Do not infer that AIML always means Python; Java, JavaScript, C, C++, C#, SQL, Git, GitHub, HTML, CSS, and other selected topics must be taught directly when selected.
+   Cybersecurity must focus on networking, Linux, and defensive security; Web Development on frontend/backend web technologies; Electrical/EEE on circuits, machines, power, and control; Chemical on process engineering and safety; Biotechnology on biology, genetics, and bioprocessing.
+3. Adapt depth strictly to '{request.level}' level.
+4. Every task in 'tasks' must have an integer id (1, 2, 3...) and status 'NOT_STARTED'.
+5. Derive actual skills and sequence from selected scope and exact project; do not reuse a generic roadmap when the project changes.
+6. Do not hallucinate URLs.
+7. All fields must be informative, practical, and specific to branch, selected domain, selected technology/topic, and goal.
+8. Every lesson field must be accurate, task-specific, and understandable to a complete beginner at the selected level. Teach understanding, examples/corrections, progressive practice, project application, assignment, mini challenge, then assessment. Each example line requires its paired explanation. Never fall back to generic Python content for another selected technology/topic.
 """
 
     try:
@@ -344,10 +634,107 @@ CRITICAL RULES:
         )
 
         plan = ProjectPlan.model_validate_json(response.text)
+        if len(plan.tasks) < 8:
+            existing_topics = "\n".join(
+                f"- {task.title}: {task.learning_objective or task.description}"
+                for task in plan.tasks
+            )
+            expansion_prompt = f"""
+The first roadmap response was too short ({len(plan.tasks)} tasks). Expand it into a complete
+8 to 12 task roadmap for the same student and exact goal. Return the COMPLETE roadmap, not only
+the additions. Preserve the useful existing progression and add distinct prerequisite and
+intermediate learning tasks needed to reach the goal. Do not duplicate, rename, or split a task
+without adding a genuinely new learning objective.
 
-        # Mark the first task as IN_PROGRESS to give an immediate starting point
-        if plan.tasks and len(plan.tasks) > 0:
-            plan.tasks[0].status = "IN_PROGRESS"
+Existing topics to retain and build on:
+{existing_topics}
+
+Original student-specific requirements:
+{prompt}
+"""
+            response = call_gemini_with_fallback(
+                client=client,
+                contents=expansion_prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_schema": ProjectPlan,
+                },
+            )
+            plan = ProjectPlan.model_validate_json(response.text)
+
+        task_ids = [task.id for task in plan.tasks]
+        normalized_titles = [" ".join(task.title.casefold().split()) for task in plan.tasks]
+        if (
+            len(task_ids) < 8
+            or len(set(task_ids)) != len(task_ids)
+            or len(set(normalized_titles)) != len(normalized_titles)
+        ):
+            raise HTTPException(
+                status_code=502,
+                detail="The AI could not produce at least 8 distinct roadmap tasks. Please try generating the roadmap again.",
+            )
+
+        try:
+            validate_plan_curriculum(plan, request.domain)
+            validate_plan_technology_examples(plan, selected_focus)
+        except HTTPException as scope_error:
+            logger.warning(
+                "Generated roadmap did not match selected domain %s or technology %s; requesting one correction.",
+                request.domain,
+                selected_focus,
+            )
+            incorrect_examples = "\n".join(
+                f"- Task '{task.title}': "
+                + " | ".join(line.content for line in task.primary_example.lines)
+                for task in plan.tasks[:4]
+            )
+            correction_prompt = f"""
+The previous roadmap did not honor the selected domain curriculum and/or technology/topic and must be corrected.
+
+Authoritative selections:
+- Path: {request.path}
+- Domain: {request.domain}
+- Technology/topic: {selected_focus}
+- Level: {request.level}
+- Goal type: {request.goal}
+- User input (context only; it must not override selections): {user_idea}
+
+The selected domain curriculum and technology/topic are mandatory. Keep the selected domain's concepts as the curriculum; rewrite any unrelated generic roadmap content and replace examples that use the wrong language/tool.
+Invalid examples to replace:
+{incorrect_examples}
+
+Validation feedback: {scope_error.detail}
+Return a complete 8 to 12 task roadmap conforming to the original schema and generation requirements below.
+Do not omit any required lesson field, assignment, progressive practice, project application, or assessment preparation.
+
+Original requirements:
+{prompt}
+"""
+            response = call_gemini_with_fallback(
+                client=client,
+                contents=correction_prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "response_schema": ProjectPlan,
+                },
+            )
+            plan = ProjectPlan.model_validate_json(response.text)
+            task_ids = [task.id for task in plan.tasks]
+            normalized_titles = [" ".join(task.title.casefold().split()) for task in plan.tasks]
+            if (
+                len(task_ids) < 8
+                or len(set(task_ids)) != len(task_ids)
+                or len(set(normalized_titles)) != len(normalized_titles)
+            ):
+                raise HTTPException(
+                    status_code=502,
+                    detail="The AI could not correct the roadmap for the selected technology/topic. Please try again.",
+                )
+            validate_plan_curriculum(plan, request.domain)
+            validate_plan_technology_examples(plan, selected_focus)
+
+        for index, task in enumerate(plan.tasks):
+            task.status = "IN_PROGRESS" if index == 0 else "NOT_STARTED"
 
         display_idea = user_idea if user_idea else (
             f"{request.domain} Mastery Roadmap" if is_learning else f"{request.domain} Project"
@@ -357,6 +744,7 @@ CRITICAL RULES:
             "project_idea": display_idea,
             "path": request.path,
             "domain": request.domain,
+            "technology": selected_focus,
             "level": request.level,
             "goal": request.goal,
             "ai_plan": plan.model_dump(),
@@ -379,11 +767,33 @@ def generate_assessment(request: GenerateAssessmentRequest):
     branch_guidance = ""
     path_lower = request.path.lower()
     domain_lower = request.domain.lower()
+    selected_technology = (request.technology or request.domain).strip()
+    technology_lower = selected_technology.lower()
 
-    if "ece" in path_lower or "iot" in path_lower or "hardware" in domain_lower:
-        branch_guidance = "Include circuit connections, sensor pinouts, embedded code logic (Arduino/C++), or hardware troubleshooting."
+    if technology_lower in {"java", "javascript", "c", "c++", "c#", "python", "html", "css"}:
+        branch_guidance = f"Use {selected_technology} syntax, code examples, debugging, and output reasoning; do not substitute another programming language."
+    elif technology_lower in {"sql", "git", "github"}:
+        branch_guidance = f"Use {selected_technology}-specific commands, queries, workflows, and debugging; do not substitute another technology."
+    elif "data structures" in domain_lower or domain_lower == "dsa":
+        branch_guidance = "Assess the selected data-structure/algorithm concept, complexity when taught, and a concrete trace or implementation in the selected language."
     elif "sql" in domain_lower or "database" in domain_lower:
         branch_guidance = "Include SQL query formulation, query debugging, table joins, or result reasoning."
+    elif "developer tools" in domain_lower:
+        branch_guidance = "Assess the selected version-control/tool workflow using real Git or GitHub commands and repository scenarios."
+    elif "ece" in path_lower or "iot" in path_lower or "hardware" in domain_lower:
+        branch_guidance = "Include circuit connections, sensor pinouts, embedded code logic (Arduino/C++), or hardware troubleshooting."
+    elif "aiml" in path_lower or "ai" in path_lower or "machine learning" in domain_lower:
+        branch_guidance = "Include reasoning specific to the selected AI/ML domain and the concepts taught in this task; use the selected technology rather than assuming Python."
+    elif "cse" in path_lower:
+        branch_guidance = "Include programming, data structures, database, operating system, networking, or software engineering problems directly related to the topic."
+    elif "cyber" in path_lower:
+        branch_guidance = "Use a defensive security or networking scenario, Linux concepts, and safe, authorized analysis."
+    elif "electrical" in path_lower or "eee" in path_lower:
+        branch_guidance = "Include circuit analysis, electrical machines, power systems, measurements, or control reasoning relevant to the task."
+    elif "chemical" in path_lower:
+        branch_guidance = "Include process engineering, reaction or transport concepts, process safety, or practical plant reasoning relevant to the task."
+    elif "biotech" in path_lower or "biotechnology" in path_lower:
+        branch_guidance = "Include cell or molecular biology, genetics, bioinformatics, or bioprocess reasoning relevant to the task."
     elif "python" in domain_lower or "software" in path_lower or "programming" in domain_lower or "web" in path_lower:
         branch_guidance = "Include code writing, syntax verification, output prediction, or practical problem solving."
     elif "cad" in domain_lower or "mechanical" in path_lower:
@@ -399,6 +809,7 @@ You are BuildReady-AI, creating a targeted verification assessment for a student
 Student Context:
 - Path: {request.path}
 - Domain: {request.domain}
+- Selected technology/topic: {request.technology or request.domain}
 - Level: {request.level}
 - Goal: {request.goal}
 - Project: {request.idea if request.idea else 'General Learning'}
@@ -407,13 +818,36 @@ Topic to Verify:
 - Topic ID: {request.topic_id}
 - Title: {request.topic_title}
 - Description: {request.topic_description}
+- Learning objective: {request.learning_objective or 'Use the topic description'}
+- Concept introduction: {request.concept_introduction or 'Use the task title and description'}
+- Prerequisites taught: {', '.join(request.lesson_prerequisites) if request.lesson_prerequisites else 'None specified'}
+- Real-world analogy taught: {request.real_world_analogy or 'None specified'}
+- Detailed explanation taught: {request.detailed_explanation or 'Use the task lesson'}
+- Key concepts taught: {', '.join(request.key_concepts) if request.key_concepts else 'Derive exact concepts from the task lesson'}
+- Simple explanation taught: {request.simple_explanation or 'Use the task description and learning objective'}
+- Small example taught: {request.small_example or 'Derive an example from the task lesson'}
+- Small example explanation: {request.example_explanation}
+- Additional examples taught: {[example.model_dump() for example in request.additional_examples]}
+- Common mistakes taught: {', '.join(request.common_mistakes) if request.common_mistakes else 'Identify mistakes directly related to this task'}
+- Mistakes and corrections taught: {[item.model_dump() for item in request.mistake_corrections]}
+- Beginner practice: {request.beginner_practice or request.practical_exercise or 'Create a guided practice task'}
+- Intermediate practice: {request.intermediate_practice or 'Create a progressively harder task based on the lesson'}
+- Assignment: {request.assignment or 'No separate assignment specified'}
+- Real-world application: {request.real_world_application or request.real_world_example or 'Apply the concept to the stated goal'}
+- Mini challenge: {request.mini_challenge or 'Create a concise independent challenge'}
+- Practice sequence summary: {request.practical_exercise or 'Use the beginner and intermediate practice tasks'}
+- Verification focus: {request.verification_focus or 'Verify the core skills for this topic'}
+- Relevant project/learning skills: {', '.join(request.related_skills) if request.related_skills else 'Derive relevant skills from the topic and goal'}
 
 Assessment Requirements:
-1. Create 3 to 4 focused verification questions that prove whether the student has genuinely learned this topic.
+1. Create 3 to 5 focused verification questions that prove whether the student has genuinely learned this topic.
 2. {branch_guidance}
 3. Tailor questions strictly to '{request.level}' level.
-4. Mix conceptual reasoning with practical execution (e.g. writing a code snippet, explaining a circuit, writing a query, or solving a scenario).
-5. Specify passing criteria clearly (e.g. 'Must correctly explain core concepts and provide working syntax/logic for the practical problem').
+4. The 'question' field MUST contain the complete student-facing question, not the category, question type, or a placeholder such as 'concept'. Never return a question whose text is only 'concept', 'practical', 'code', or another type label.
+5. Ask concrete, answerable, topic-specific questions using only the concepts and skills taught above, including the examples, practice, and assignment. Use the selected technology/topic, never default to Python unless Python is selected or explicitly required by the selected domain.
+6. Mix conceptual reasoning with practical execution (e.g. writing a code snippet, explaining a circuit, writing a query, or solving a scenario).
+7. For multiple-choice questions, include 3 or 4 choices in 'options'; for other questions, options may be empty.
+8. Specify passing criteria clearly (e.g. 'Must correctly explain core concepts and provide working syntax/logic for the practical problem').
 """
 
     try:
@@ -429,6 +863,21 @@ Assessment Requirements:
         assessment = TopicAssessment.model_validate_json(response.text)
         assessment.topic_id = request.topic_id
         assessment.topic_title = request.topic_title
+        question_ids = [question.id for question in assessment.questions]
+        question_texts = [" ".join(question.question.casefold().split()) for question in assessment.questions]
+        if (
+            not 3 <= len(question_ids) <= 5
+            or len(set(question_ids)) != len(question_ids)
+            or any(
+                len(text) < 4
+                or re.fullmatch(
+                    r"(?:q(?:uestion)?\s*\d+\s*[:.)-]?\s*)?(?:concept|practical|code|question|multiple choice)",
+                    text,
+                )
+                for text in question_texts
+            )
+        ):
+            raise ValueError("Assessment questions must have unique IDs and meaningful, topic-specific question text.")
 
         return assessment.model_dump()
 
@@ -444,10 +893,15 @@ Assessment Requirements:
 @app.post("/evaluate-assessment")
 def evaluate_assessment(request: EvaluateAssessmentRequest):
     """Evaluate student answers to verify whether the topic is COMPLETED/VERIFIED or NEEDS_PRACTICE."""
+    submitted_ids = [submission.question_id for submission in request.submissions]
+    if len(set(submitted_ids)) != len(submitted_ids):
+        raise HTTPException(status_code=422, detail="Assessment question IDs must be unique.")
     client = get_gemini_client()
 
     submissions_text = "\n\n".join([
-        f"Question {sub.question_id}: {sub.question}\nStudent's Answer:\n\"{sub.user_answer.strip() if sub.user_answer.strip() else '[No Answer Provided]'}\""
+        f"Question {sub.question_id}: {sub.question}\n"
+        f"Available choices: {', '.join(sub.options) if sub.options else 'No multiple-choice options'}\n"
+        f"Student's Answer:\n\"{sub.user_answer.strip() if sub.user_answer.strip() else '[No Answer Provided]'}\""
         for sub in request.submissions
     ])
 
@@ -457,26 +911,50 @@ You are BuildReady-AI, a rigorous but fair engineering evaluator.
 Context:
 - Path: {request.path}
 - Domain: {request.domain}
+- Selected technology/topic: {request.technology or request.domain}
 - Level: {request.level}
+- Goal: {request.goal}
+- Project: {request.idea if request.idea else 'General Learning'}
 - Topic: {request.topic_title} ({request.topic_description})
+- Learning objective: {request.learning_objective or 'Use the topic description'}
+- Concept introduction: {request.concept_introduction or 'Use the task title and description'}
+- Prerequisites taught: {', '.join(request.lesson_prerequisites) if request.lesson_prerequisites else 'None specified'}
+- Real-world analogy taught: {request.real_world_analogy or 'None specified'}
+- Detailed explanation taught: {request.detailed_explanation or 'Use the task lesson'}
+- Key concepts taught: {', '.join(request.key_concepts) if request.key_concepts else 'Derive from the task description'}
+- Simple explanation taught: {request.simple_explanation or 'Use the topic description'}
+- Small example taught: {request.small_example or 'Derive from the topic description'}
+- Small example explanation: {request.example_explanation}
+- Additional examples taught: {[example.model_dump() for example in request.additional_examples]}
+- Common mistakes taught: {', '.join(request.common_mistakes) if request.common_mistakes else 'Identify mistakes relevant to this topic'}
+- Mistakes and corrections taught: {[item.model_dump() for item in request.mistake_corrections]}
+- Beginner practice: {request.beginner_practice or request.practical_exercise or 'Apply the topic to a guided task'}
+- Intermediate practice: {request.intermediate_practice or 'Apply the topic in a progressively harder task'}
+- Assignment: {request.assignment or 'No separate assignment specified'}
+- Real-world application: {request.real_world_application or 'Apply the topic to the stated goal'}
+- Mini challenge: {request.mini_challenge or 'Apply the topic independently'}
+- Practice sequence summary: {request.practical_exercise or 'Use the beginner and intermediate practice tasks'}
 
 Student's Submitted Answers:
 {submissions_text}
 
 EVALUATION RULES:
-1. Evaluate each answer for genuine comprehension and technical correctness.
-2. If the student answers are empty, superficial, or contain phrases like 'i don't know', 'idk', or are fundamentally incorrect:
+1. Evaluate each answer for genuine comprehension and technical correctness against the selected technology/topic, learning objective, concepts, explanation, examples, practice, and assignment taught above. Do not introduce Python conventions unless Python is selected or explicitly required.
+2. For a multiple-choice question, compare the student's selected answer with the supplied choices and determine the technically correct choice yourself. Mark an objectively incorrect selection incorrect; do not award credit just because it is related to the topic.
+3. Evaluate only the named task and exact submitted questions. Do not use feedback or examples from another topic or project.
+4. If the student answers are empty, superficial, or contain phrases like 'i don't know', 'idk', or are fundamentally incorrect:
    - status: 'NEEDS_PRACTICE'
    - passed: False
    - score: 0 to 50
    - Identify specific 'weak_areas' and provide targeted remedial guidance in 'targeted_practice'.
-3. If the student demonstrates solid conceptual and practical grasp appropriate for '{request.level}':
+5. If the student demonstrates solid conceptual and practical grasp appropriate for '{request.level}':
    - status: 'VERIFIED'
    - passed: True
    - score: 70 to 100
    - Highlight their 'strengths' and suggest 'next_step'.
-4. If score >= 65, set status='VERIFIED' and passed=True. Otherwise status='NEEDS_PRACTICE' and passed=False.
-5. Provide constructive, encouraging, actionable feedback.
+6. If score >= 65, set status='VERIFIED' and passed=True. Otherwise status='NEEDS_PRACTICE' and passed=False.
+7. Set 'question_results' with one entry per submitted question. Include question_id, correct, specific feedback, and an explanation of the expected reasoning.
+8. Keep 'passed' and 'status' consistent with the 65 point threshold and provide constructive, encouraging, actionable feedback tied to this task.
 """
 
     try:
@@ -491,6 +969,16 @@ EVALUATION RULES:
 
         evaluation = AssessmentEvaluation.model_validate_json(response.text)
         evaluation.topic_id = request.topic_id
+        submitted_ids = set(submitted_ids)
+        evaluated_ids = {item.question_id for item in evaluation.question_results}
+        if (
+            submitted_ids != evaluated_ids
+            or len(evaluation.question_results) != len(request.submissions)
+            or len(evaluated_ids) != len(evaluation.question_results)
+        ):
+            raise ValueError("Evaluation must provide feedback for every submitted question.")
+        evaluation.passed = evaluation.score >= 65
+        evaluation.status = "VERIFIED" if evaluation.passed else "NEEDS_PRACTICE"
 
         return evaluation.model_dump()
 
@@ -522,6 +1010,7 @@ You are directly connected to the student's active learning roadmap.
 Student Context:
 - Engineering Path: {request.path}
 - Domain / Topic: {request.domain}
+- Selected technology/topic: {request.technology or request.domain}
 - Level: {request.level}
 - Goal: {request.goal}
 - Project Idea: {request.idea if request.idea else 'None'}
@@ -530,24 +1019,21 @@ Student Context:
 Roadmap Topics & Statuses:
 {topics_summary if topics_summary else 'No active roadmap loaded yet'}
 
+Recent Assessment Results:
+{chr(10).join([f"- Topic #{result.topic_id}: {result.score}/100, {result.status}. Feedback: {result.overall_feedback}; areas to practice: {', '.join(result.weak_areas) or 'none listed'}" for result in request.assessment_results]) if request.assessment_results else 'No assessment results yet'}
+
 Student's Message:
 "{request.message}"
 
 MENTOR GUIDELINES & ROADMAP INTERACTION:
-1. Maintain student context ({request.path}, {request.domain}, {request.level}).
+1. Maintain student context ({request.path}, {request.domain}, {request.technology or request.domain}, {request.level}); selected technology/domain take precedence over unrelated words in the goal.
 2. If the student asks a technical or conceptual question:
    - Teach clearly with simple analogies and code/hardware examples matched to their level ({request.level}).
-3. If the student claims to have completed a topic (e.g. 'I finished Functions', 'I completed Arduino setup', 'Verify my topic'):
-   - Ask 2 to 3 targeted verification questions or practical challenges to test their knowledge.
-4. If the student is replying to verification questions:
-   - Evaluate their answers.
-   - If they show genuine understanding, congratulate them and append EXACTLY:
-     [STATUS_UPDATE: topic_id=<id>, status=VERIFIED]
-   - If they gave incorrect or superficial answers, explain what was missing, give guidance, and append:
-     [STATUS_UPDATE: topic_id=<id>, status=NEEDS_PRACTICE]
-   (Replace <id> with the matching topic number from the roadmap).
-5. If the student asks for practice on a weak topic, provide targeted exercises.
-6. Keep answers concise, clear, and inspiring.
+3. Explain the next learning step using the roadmap and respect task order and statuses.
+4. If asked about a failed assessment, refer to its recorded score, feedback, and weak areas; provide targeted practice.
+5. You may recommend that a task be started or practiced, but NEVER claim a task is VERIFIED or change its status; only the assessment endpoint can verify a task.
+6. If asked whether the student is ready, base the answer on verified roadmap tasks and clearly identify remaining work.
+7. Keep answers concise, clear, and inspiring.
 """
 
     try:
@@ -561,29 +1047,9 @@ MENTOR GUIDELINES & ROADMAP INTERACTION:
 
         reply_raw = response.text.strip() if response.text else "I am here to guide and verify your learning. What would you like to explore?"
 
-        # Extract [STATUS_UPDATE: topic_id=X, status=STATUS]
-        status_match = re.search(
-            r"\[STATUS_UPDATE:\s*topic_id=(\d+),\s*status=(VERIFIED|NEEDS_PRACTICE|IN_PROGRESS)\]",
-            reply_raw,
-            re.IGNORECASE
-        )
-
-        topic_update = None
-        clean_reply = reply_raw
-
-        if status_match:
-            tid = int(status_match.group(1))
-            st = status_match.group(2).upper()
-            topic_update = {
-                "topic_id": tid,
-                "status": st
-            }
-            # Remove the tag from the user-facing message
-            clean_reply = re.sub(r"\[STATUS_UPDATE:.*?\]", "", reply_raw).strip()
-
         return {
-            "reply": clean_reply,
-            "topic_update": topic_update
+            "reply": reply_raw,
+            "topic_update": None
         }
 
     except HTTPException:

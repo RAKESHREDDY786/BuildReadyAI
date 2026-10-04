@@ -8,7 +8,7 @@ from pathlib import Path
 
 # Add backend directory to sys.path so modules resolve smoothly
 backend_dir = Path(__file__).resolve().parent / "backend"
-if str(backend_dir) not in sys.path:
+if str(backend_dir) not in sys.path: 
     sys.path.insert(0, str(backend_dir))
 
 from backend.main import app  # noqa: E402

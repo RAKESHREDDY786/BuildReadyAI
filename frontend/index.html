@@ -3,129 +3,202 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f5f8ff">
     <title>BuildReady-AI</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="main-container">
-    <h1>BuildReady-AI</h1>
-    <p class="subtitle">Turn your engineering path and ideas into a build-ready project plan and personalized roadmap.</p>
+<header class="topbar">
+    <a class="brand" href="#" aria-label="BuildReady-AI home">
+        <span class="brand-mark" aria-hidden="true">✦</span>
+        <span>BuildReady-AI</span>
+    </a>
+    <nav class="top-navigation" aria-label="Main navigation">
+        <a href="#selectionPanel">Plan</a>
+        <span>·</span>
+        <a href="#result">Learn</a>
+        <span>·</span>
+        <a href="#result">Build</a>
+        <span>·</span>
+        <a href="#chatbot">Grow</a>
+    </nav>
+    <button class="student-menu" type="button" aria-label="Student profile">
+        <span class="student-avatar" aria-hidden="true">S</span>
+        <span>Student</span>
+        <span aria-hidden="true">⌄</span>
+    </button>
+</header>
 
-    <h2>Choose Your Path</h2>
-    <div class="path-container">
-        <button class="path-card" data-path="AI / ML">
-            🤖 AI / ML
-        </button>
-        <button class="path-card" data-path="Data Science">
-            📊 Data Science
-        </button>
-        <button class="path-card" data-path="Software Development">
-            💻 Software Development
-        </button>
-        <button class="path-card" data-path="Web Development">
-            🌐 Web Development
-        </button>
-        <button class="path-card" data-path="Cybersecurity">
-            🔐 Cybersecurity
-        </button>
-        <button class="path-card" data-path="ECE / IoT">
-            📡 ECE / IoT
-        </button>
-        <button class="path-card" data-path="Electrical / EEE">
-            ⚡ Electrical / EEE
-        </button>
-        <button class="path-card" data-path="Mechanical">
-            ⚙️ Mechanical
-        </button>
-        <button class="path-card" data-path="Civil">
-            🏗️ Civil
-        </button>
-        <button class="path-card" data-path="Chemical">
-            🧪 Chemical
-        </button>
-        <button class="path-card" data-path="Biotechnology">
-            🧬 Biotechnology
-        </button>
-        <button class="path-card" data-path="Other">
-            ➕ Other
-        </button>
-    </div>
+<div class="dashboard-layout">
+    <aside class="selection-sidebar" id="selectionPanel" aria-label="Learning plan selection">
+        <div class="sidebar-heading">
+            <span class="eyebrow">YOUR LEARNING PLAN</span>
+            <h2>Choose your path</h2>
+            <p>Personalize your roadmap to match your goals.</p>
+        </div>
 
-    <h2>Choose Your Level</h2>
-    <div class="level-container">
-        <button class="level-card" data-level="Beginner">
-            🌱 Beginner
-        </button>
-        <button class="level-card" data-level="Intermediate">
-            🚀 Intermediate
-        </button>
-        <button class="level-card" data-level="Advanced">
-            🧠 Advanced
-        </button>
-    </div>
-
-    <h2>What do you want to do?</h2>
-    <div class="goal-container">
-        <button class="goal-card" data-goal="Learn the Domain">
-            📚 Learn the Domain
-        </button>
-        <button class="goal-card" data-goal="Build a Project">
-            💡 Build a Project
-        </button>
-    </div>
-
-    <h2>Choose Your Domain / Topic</h2>
-    <div id="domainContainer" class="domain-container">
-        <!-- Domains will appear dynamically based on selected path -->
-    </div>
-
-    <div id="otherPathSection" hidden>
-        <h3>What field or topic do you want to learn?</h3>
-        <input
-            id="otherPathInput"
-            type="text"
-            placeholder="Example: Aerospace, Robotics Hardware, Financial Engineering, UI/UX"
-        >
-    </div>
-
-    <textarea
-        id="projectIdea"
-        placeholder="Describe what you want to learn or build..."
-    ></textarea>
-
-    <div class="button-row">
-        <button id="buildBtn" type="button">Create Learning Roadmap</button>
-        <button id="clearSavedPlanBtn" type="button" hidden>Clear Saved Plan</button>
-    </div>
-
-    <div id="result"></div>
-
-    <section class="chatbot-section">
-        <h2>💬 Ask BuildReady</h2>
-        <p id="chatContext">
-            Choose your path, domain, goal, and level, then ask a question.
-        </p>
-
-        <div id="chatMessages" class="chat-messages">
-            <div class="chat-message bot-message">
-                <strong>BuildReady:</strong>
-                Hi! I am your engineering mentor. Choose your path and goal above, or ask me any question about what to learn or build!
+        <section class="selector-section">
+            <h3><span class="selector-icon purple">✦</span> Path</h3>
+            <div class="path-container">
+                <button class="path-card" data-path="AIML">🤖 AIML</button>
+                <button class="path-card" data-path="CSE">💻 CSE</button>
+                <button class="path-card" data-path="AI">✨ AI</button>
+                <button class="path-card" data-path="Data Science">📊 Data Science</button>
+                <button class="path-card" data-path="Software Development">🧩 Software Development</button>
+                <button class="path-card" data-path="Web Development">🌐 Web Development</button>
+                <button class="path-card" data-path="Cybersecurity">🔐 Cybersecurity</button>
+                <button class="path-card" data-path="ECE / IoT">📡 ECE / IoT</button>
+                <button class="path-card" data-path="Electrical / EEE">⚡ Electrical / EEE</button>
+                <button class="path-card" data-path="Mechanical">⚙️ Mechanical</button>
+                <button class="path-card" data-path="Civil">🏗️ Civil</button>
+                <button class="path-card" data-path="Chemical">🧪 Chemical</button>
+                <button class="path-card" data-path="Biotechnology">🧬 Biotechnology</button>
+                <button class="path-card" data-path="Other">＋ Other</button>
             </div>
-        </div>
+        </section>
 
-        <div class="chat-input-row">
-            <input
-                id="chatInput"
-                type="text"
-                placeholder="Example: Explain Python functions simply, or what should I learn next?"
-            >
-            <button id="chatSendBtn" type="button">
-                Send
-            </button>
+        <section class="selector-section">
+            <h3><span class="selector-icon blue">⌘</span> Domain / Topic</h3>
+            <div id="domainContainer" class="domain-container">
+                <p class="selector-hint">Choose a path to see relevant topics.</p>
+            </div>
+            <div id="otherPathSection" hidden>
+                <label for="otherPathInput">What field or topic do you want to learn?</label>
+                <input id="otherPathInput" type="text" placeholder="Example: Robotics Hardware">
+            </div>
+        </section>
+
+        <section class="selector-section">
+            <h3><span class="selector-icon teal">⌘</span> Technology / Topic Focus</h3>
+            <div id="technologyContainer" class="domain-container">
+                <p class="selector-hint">Choose a domain first to see relevant technologies.</p>
+            </div>
+        </section>
+
+        <section class="selector-section">
+            <h3><span class="selector-icon green">◉</span> Goal</h3>
+            <div class="goal-container">
+                <button class="goal-card" data-goal="Learn the Domain">📚 Learn the Domain</button>
+                <button class="goal-card" data-goal="Build a Project">💡 Build a Project</button>
+            </div>
+            <label class="visually-hidden" for="projectIdea">Your learning goal or project idea</label>
+            <textarea id="projectIdea" placeholder="Your goal or project (e.g. AI Resume Analyzer)"></textarea>
+        </section>
+
+        <section class="selector-section level-section">
+            <h3><span class="selector-icon teal">↗</span> Level</h3>
+            <div class="level-container">
+                <button class="level-card" data-level="Beginner">🌱 Beginner</button>
+                <button class="level-card" data-level="Intermediate">🚀 Intermediate</button>
+                <button class="level-card" data-level="Advanced">🧠 Advanced</button>
+            </div>
+        </section>
+
+        <div class="selection-actions">
+            <button id="buildBtn" type="button">Create My Roadmap <span aria-hidden="true">→</span></button>
+            <button id="clearSavedPlanBtn" type="button" hidden>Clear Saved Plan</button>
         </div>
-    </section>
+    </aside>
+
+    <main class="workspace">
+        <section class="workspace-heading">
+            <div class="workspace-icon" aria-hidden="true">✦</div>
+            <div>
+                <p class="eyebrow">YOUR PERSONALIZED LEARNING SPACE</p>
+                <h1 id="dashboardTitle">Start building your future</h1>
+                <p id="dashboardSubtitle">Choose a path, domain, goal, and level to create a roadmap that is right for you.</p>
+            </div>
+            <span class="level-pill" id="dashboardLevel">Select a level</span>
+        </section>
+
+        <nav class="workspace-tabs" aria-label="Roadmap sections">
+            <a class="active" href="#result">Overview</a>
+            <a href="#taskList">Roadmap</a>
+            <a href="#taskList">Lessons</a>
+            <a href="#taskList">Practice</a>
+            <a href="#taskList">Quiz</a>
+            <a href="#taskList">Verify</a>
+        </nav>
+
+        <div id="result">
+            <section class="welcome-card">
+                <span class="welcome-icon" aria-hidden="true">✧</span>
+                <div>
+                    <h2>Your learning journey starts here</h2>
+                    <p>Choose your path and goal. BuildReady will create a personalized roadmap with lessons, hands-on practice, and task assessments.</p>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <aside class="right-sidebar" aria-label="Progress and help">
+        <section class="side-card progress-side-card">
+            <div class="side-card-title">
+                <span class="side-title-icon">◉</span>
+                <h2>Your Progress</h2>
+            </div>
+            <div class="progress-overview">
+                <div class="progress-circle" id="progressCircle">
+                    <span id="progressNumber">0%</span>
+                </div>
+                <div class="progress-details">
+                    <strong id="progressTaskCount">No roadmap yet</strong>
+                    <div id="progressSummary" class="progress-summary">
+                        <span class="status-summary status-verified">Completed: 0</span>
+                        <span class="status-summary status-in_progress">In Progress: 0</span>
+                        <span class="status-summary status-needs_practice">Needs Practice: 0</span>
+                        <span class="status-summary status-not_started">Not Started: 0</span>
+                    </div>
+                </div>
+            </div>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <p id="progressText" class="progress-caption">Create a roadmap to track your progress.</p>
+            <p id="currentTaskSummary" class="current-task-summary">Your current task will appear here.</p>
+        </section>
+
+        <section class="side-card quick-actions-card">
+            <div class="side-card-title">
+                <span class="side-title-icon">▣</span>
+                <h2>Quick Actions</h2>
+            </div>
+            <button class="quick-action-primary" id="continueRoadmap" type="button">▶ &nbsp; Continue Roadmap</button>
+            <button class="quick-action-secondary" id="askBuildReady" type="button">▢ &nbsp; Ask BuildReady</button>
+            <a class="quick-action-secondary" href="#selectionPanel">⌘ &nbsp; Edit Your Path</a>
+        </section>
+
+        <section class="side-card tip-card">
+            <div class="side-card-title">
+                <span class="side-title-icon">♧</span>
+                <h2>Did you know?</h2>
+            </div>
+            <p>Your lessons, practice, and quizzes are tailored to your selected path, domain, goal, and level.</p>
+        </section>
+
+        <section class="side-card help-card" id="chatbot">
+            <div class="side-card-title">
+                <span class="side-title-icon">◉</span>
+                <h2>Need Help?</h2>
+            </div>
+            <p>Ask BuildReady about your current topic or what to learn next.</p>
+            <div id="chatContext" class="chat-context">Choose your path and goal to get personalized guidance.</div>
+            <div id="chatMessages" class="chat-messages">
+                <div class="chat-message bot-message">
+                    <strong>BuildReady:</strong>
+                    Hi! I am your engineering mentor. Ask me about what to learn or build.
+                </div>
+            </div>
+            <div class="chat-input-row">
+                <label class="visually-hidden" for="chatInput">Ask BuildReady a question</label>
+                <input id="chatInput" type="text" placeholder="Ask a question...">
+                <button id="chatSendBtn" type="button" aria-label="Send message">➤</button>
+            </div>
+        </section>
+    </aside>
 </div>
 
+<script src="config.js"></script>
 <script src="script.js"></script>
 </body>
 </html>
