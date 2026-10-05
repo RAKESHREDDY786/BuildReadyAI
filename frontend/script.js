@@ -9,7 +9,9 @@ let currentPlanIdea = "";
 let currentTaskId = null;
 let assessmentsByTask = {};
 let assessmentHistory = {};
-const rawApiUrl = typeof window.BUILDREADY_CONFIG?.apiBaseUrl === "string" ? window.BUILDREADY_CONFIG.apiBaseUrl : "http://127.0.0.1:8000";
+const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+const defaultApiUrl = isLocalFrontend ? "http://127.0.0.1:8000" : "https://buildreadyai.onrender.com";
+const rawApiUrl = typeof window.BUILDREADY_CONFIG?.apiBaseUrl === "string" ? window.BUILDREADY_CONFIG.apiBaseUrl : defaultApiUrl;
 const API_BASE_URL = rawApiUrl.replace(/\/+$/, "");
 const TASK_STATUSES = ["NOT_STARTED", "IN_PROGRESS", "NEEDS_PRACTICE", "VERIFIED"];
 

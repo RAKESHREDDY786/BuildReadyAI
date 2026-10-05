@@ -1,7 +1,9 @@
 // Founder Dashboard JavaScript
 // Handles authentication and data fetching for the founder-only usage tracker
 
-const rawFounderApiUrl = typeof window.BUILDREADY_CONFIG?.apiBaseUrl === "string" ? window.BUILDREADY_CONFIG.apiBaseUrl : "http://127.0.0.1:8000";
+const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+const defaultFounderApiUrl = isLocalFrontend ? "http://127.0.0.1:8000" : "https://buildreadyai.onrender.com";
+const rawFounderApiUrl = typeof window.BUILDREADY_CONFIG?.apiBaseUrl === "string" ? window.BUILDREADY_CONFIG.apiBaseUrl : defaultFounderApiUrl;
 const API_BASE_URL = rawFounderApiUrl.replace(/\/+$/, "");
 const STORAGE_KEY = "founder_session_key";
 
