@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Founder Dashboard - BuildReady-AI</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="founder-dashboard.css">
+</head>
+<body>
+    <!-- Login Modal -->
+    <div id="loginModal" class="login-modal">
+        <div class="login-box">
+            <h2>Founder Dashboard</h2>
+            <p>Enter your founder secret key to access usage statistics.</p>
+            <form id="loginForm">
+                <label for="founderKey">Founder Secret Key</label>
+                <input type="password" id="founderKey" placeholder="Enter your secret key" required>
+                <button type="submit">Access Dashboard</button>
+            </form>
+            <p id="loginError" class="error-message"></p>
+        </div>
+    </div>
+
+    <!-- Dashboard Content -->
+    <div id="dashboardContent" class="dashboard-content" hidden>
+        <header class="dashboard-header">
+            <div class="header-left">
+                <h1>Founder Dashboard</h1>
+                <p>Real Usage Tracker - BuildReady-AI</p>
+            </div>
+            <div class="header-right">
+                <button id="logoutBtn" type="button">Logout</button>
+            </div>
+        </header>
+
+        <!-- Period Selector -->
+        <section class="period-selector">
+            <label for="periodSelect">Time Period:</label>
+            <select id="periodSelect">
+                <option value="today">Today</option>
+                <option value="7d">Last 7 Days</option>
+                <option value="30d">Last 30 Days</option>
+                <option value="all" selected>All Time</option>
+            </select>
+            <button id="refreshBtn" type="button">Refresh Data</button>
+        </section>
+
+        <!-- Summary Cards -->
+        <section class="summary-cards">
+            <div class="stat-card">
+                <h3>Total Users</h3>
+                <p class="stat-value" id="totalUsers">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>AI Requests</h3>
+                <p class="stat-value" id="totalRequests">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Input Tokens</h3>
+                <p class="stat-value" id="inputTokens">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Output Tokens</h3>
+                <p class="stat-value" id="outputTokens">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Total Tokens</h3>
+                <p class="stat-value" id="totalTokens">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Avg Tokens/User</h3>
+                <p class="stat-value" id="avgTokensPerUser">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Avg Tokens/Request</h3>
+                <p class="stat-value" id="avgTokensPerRequest">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Successful</h3>
+                <p class="stat-value" id="successful">-</p>
+            </div>
+            <div class="stat-card">
+                <h3>Failed</h3>
+                <p class="stat-value" id="failed">-</p>
+            </div>
+        </section>
+
+        <!-- Highest/Lowest Usage -->
+        <section class="usage-summary">
+            <div class="usage-card">
+                <h3>Highest Usage User</h3>
+                <p id="highestUser">-</p>
+            </div>
+            <div class="usage-card">
+                <h3>Lowest Usage User</h3>
+                <p id="lowestUser">-</p>
+            </div>
+        </section>
+
+        <!-- Per-User Table -->
+        <section class="data-section">
+            <h2>Per-User Statistics</h2>
+            <div class="table-container">
+                <table id="usersTable">
+                    <thead>
+                        <tr>
+                            <th>User ID</th>
+                            <th>Requests</th>
+                            <th>Input Tokens</th>
+                            <th>Output Tokens</th>
+                            <th>Total Tokens</th>
+                            <th>Last Active</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                        <tr>
+                            <td colspan="6" class="no-data">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Recent Events Table -->
+        <section class="data-section">
+            <h2>Recent Usage Events</h2>
+            <div class="table-container">
+                <table id="eventsTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>User ID</th>
+                            <th>Timestamp</th>
+                            <th>Feature</th>
+                            <th>Input Tokens</th>
+                            <th>Output Tokens</th>
+                            <th>Total Tokens</th>
+                            <th>Success</th>
+                            <th>Model</th>
+                        </tr>
+                    </thead>
+                    <tbody id="eventsTableBody">
+                        <tr>
+                            <td colspan="9" class="no-data">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="loading-overlay" hidden>
+            <div class="spinner"></div>
+            <p>Loading data...</p>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="founder-dashboard.js"></script>
+</body>
+</html>

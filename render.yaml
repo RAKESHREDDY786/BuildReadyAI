@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: buildready-ai
+    env: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FOUNDER_SECRET_KEY
+        sync: false
+      - key: CORS_ALLOW_ORIGINS
+        value: "*"

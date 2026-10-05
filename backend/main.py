@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from pydantic import BaseModel, Field, model_validator
+
+import tracker
 
 # -----------------------------
 # Secure environment loading
@@ -33,6 +35,10 @@ app = FastAPI(
 )
 
 app.mount("/frontend", StaticFiles(directory=FRONTEND_DIR), name="frontend")
+
+# Initialise the usage tracking database at startup (creates file + table if absent).
+# Never inserts demo/seed data.
+tracker.init_db()
 
 logger = logging.getLogger(__name__)
 
@@ -164,14 +170,15 @@ def validate_plan_curriculum(
             )
 
 
-cors_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ALLOW_ORIGINS",
-        "http://localhost:5500,http://127.0.0.1:5500,http://localhost:3000,http://127.0.0.1:3000,null",
-    ).split(",")
-    if origin.strip()
-]
+cors_origins_raw = os.getenv("CORS_ALLOW_ORIGINS", "*")
+if cors_origins_raw.strip() == "*":
+    cors_origins = ["*"]
+else:
+    cors_origins = [
+        origin.strip()
+        for origin in cors_origins_raw.split(",")
+        if origin.strip()
+    ]
 
 app.add_middleware(
     CORSMiddleware,
@@ -452,12 +459,17 @@ class ChatResponse(BaseModel):
 # -----------------------------
 def raise_ai_error(error: Exception, feature_name: str):
     error_text = str(error)
-    logger.error("%s AI request failed (%s).", feature_name, type(error).__name__)
+    logger.error("%s AI request failed (%s): %s", feature_name, type(error).__name__, error_text)
 
     if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
         raise HTTPException(
             status_code=429,
             detail=f"{feature_name} has reached the AI rate limit. Please try again in a few moments."
+        )
+    if "401" in error_text or "403" in error_text or "API_KEY_INVALID" in error_text or "Authentication failed" in error_text:
+        raise HTTPException(
+            status_code=401,
+            detail="The AI service rejected its credentials. Check GEMINI_API_KEY in backend/.env."
         )
     if "503" in error_text or "UNAVAILABLE" in error_text:
         raise HTTPException(
@@ -470,11 +482,6 @@ def raise_ai_error(error: Exception, feature_name: str):
             detail="Selected AI model is currently unavailable. Please try again."
         )
 
-    if "401" in error_text or "403" in error_text or "API_KEY_INVALID" in error_text:
-        raise HTTPException(
-            status_code=503,
-            detail="The AI service rejected its credentials. Check the backend Gemini API key configuration."
-        )
     raise HTTPException(
         status_code=502,
         detail=f"{feature_name} could not complete the AI request. Please try again shortly."
@@ -485,21 +492,48 @@ def call_gemini_with_fallback(client: genai.Client, contents: str, config: dict)
     last_error = None
     for model_name in GEMINI_MODELS:
         try:
-            return client.models.generate_content(
+            response = client.models.generate_content(
                 model=model_name,
                 contents=contents,
                 config=config,
             )
+            # Attach which model actually answered so callers can log it
+            response._model_used = model_name
+            return response
         except Exception as e:
             err_msg = str(e)
-            logger.warning("Gemini model %s failed; trying the next configured model.", model_name)
+            logger.warning("Gemini model %s failed (%s); trying the next configured model.", model_name, type(e).__name__)
             last_error = e
-            if "404" in err_msg or "503" in err_msg or "NOT_FOUND" in err_msg or "UNAVAILABLE" in err_msg:
-                continue
-            raise e
+            # If the API key itself is rejected, fallback models won't help
+            if "401" in err_msg or "403" in err_msg or "API_KEY_INVALID" in err_msg or "Authentication failed" in err_msg:
+                raise e
+            continue
     if last_error:
         raise last_error
     raise RuntimeError("No Gemini models available.")
+
+
+def _extract_tokens(response) -> tuple[int, int, int]:
+    """
+    Extract real token counts from a Gemini response.
+    Returns (input_tokens, output_tokens, total_tokens).
+    Never fabricates values — returns (0, 0, 0) when metadata is unavailable.
+    """
+    try:
+        meta = getattr(response, "usage_metadata", None)
+        if meta is None:
+            return 0, 0, 0
+        inp  = getattr(meta, "prompt_token_count",     None) or 0
+        out  = getattr(meta, "candidates_token_count", None) or 0
+        tot  = getattr(meta, "total_token_count",      None) or (inp + out)
+        return int(inp), int(out), int(tot)
+    except Exception:
+        return 0, 0, 0
+
+
+def _model_used(response) -> str:
+    """Return the model name that produced a response, or empty string."""
+    return getattr(response, "_model_used", "")
 
 
 # -----------------------------
@@ -525,7 +559,10 @@ def health():
 # Generate Plan Endpoint
 # -----------------------------
 @app.post("/generate-plan")
-def generate_plan(request: ProjectRequest):
+def generate_plan(
+    request: ProjectRequest,
+    x_user_id: Optional[str] = Header(default="anonymous", alias="X-User-Id"),
+):
     client = get_gemini_client()
 
     is_learning = "learn" in request.goal.lower()
@@ -624,6 +661,9 @@ CRITICAL RULES:
 8. Every lesson field must be accurate, task-specific, and understandable to a complete beginner at the selected level. Teach understanding, examples/corrections, progressive practice, project application, assignment, mini challenge, then assessment. Each example line requires its paired explanation. Never fall back to generic Python content for another selected technology/topic.
 """
 
+    # Sanitise user ID: only alphanumerics + hyphens, max 64 chars
+    safe_user_id = re.sub(r"[^A-Za-z0-9\-]", "", (x_user_id or "anonymous"))[:64] or "anonymous"
+
     try:
         response = call_gemini_with_fallback(
             client=client,
@@ -635,6 +675,11 @@ CRITICAL RULES:
         )
 
         plan = ProjectPlan.model_validate_json(response.text)
+
+        # --- Accumulate real token usage across all Gemini calls for this request ---
+        _inp, _out, _tot = _extract_tokens(response)
+        _model = _model_used(response)
+
         if len(plan.tasks) < 8:
             existing_topics = "\n".join(
                 f"- {task.title}: {task.learning_objective or task.description}"
@@ -662,6 +707,8 @@ Original student-specific requirements:
                 },
             )
             plan = ProjectPlan.model_validate_json(response.text)
+            ei, eo, et = _extract_tokens(response)
+            _inp += ei; _out += eo; _tot += et
 
         task_ids = [task.id for task in plan.tasks]
         normalized_titles = [" ".join(task.title.casefold().split()) for task in plan.tasks]
@@ -720,6 +767,8 @@ Original requirements:
                 },
             )
             plan = ProjectPlan.model_validate_json(response.text)
+            ei, eo, et = _extract_tokens(response)
+            _inp += ei; _out += eo; _tot += et
             task_ids = [task.id for task in plan.tasks]
             normalized_titles = [" ".join(task.title.casefold().split()) for task in plan.tasks]
             if (
@@ -741,6 +790,17 @@ Original requirements:
             f"{request.domain} Mastery Roadmap" if is_learning else f"{request.domain} Project"
         )
 
+        # Record REAL token usage from this successful roadmap generation
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="generate-plan",
+            input_tokens=_inp,
+            output_tokens=_out,
+            total_tokens=_tot,
+            success=True,
+            model_used=_model,
+        )
+
         return {
             "project_idea": display_idea,
             "path": request.path,
@@ -752,8 +812,27 @@ Original requirements:
         }
 
     except HTTPException:
+        # Record failed plan generation (no output tokens when Gemini was not reached)
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="generate-plan",
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            success=False,
+            notes="HTTPException before or during generation",
+        )
         raise
     except Exception as error:
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="generate-plan",
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            success=False,
+            notes=str(error)[:200],
+        )
         raise_ai_error(error, "BuildReady-AI Plan Generator")
 
 
@@ -761,7 +840,10 @@ Original requirements:
 # Generate Assessment Endpoint
 # -----------------------------
 @app.post("/generate-assessment")
-def generate_assessment(request: GenerateAssessmentRequest):
+def generate_assessment(
+    request: GenerateAssessmentRequest,
+    x_user_id: Optional[str] = Header(default="anonymous", alias="X-User-Id"),
+):
     """Generate adaptive verification questions tailored to branch, domain, topic, and level."""
     client = get_gemini_client()
 
@@ -851,6 +933,8 @@ Assessment Requirements:
 8. Specify passing criteria clearly (e.g. 'Must correctly explain core concepts and provide working syntax/logic for the practical problem').
 """
 
+    safe_user_id = re.sub(r"[^A-Za-z0-9\-]", "", (x_user_id or "anonymous"))[:64] or "anonymous"
+
     try:
         response = call_gemini_with_fallback(
             client=client,
@@ -880,11 +964,33 @@ Assessment Requirements:
         ):
             raise ValueError("Assessment questions must have unique IDs and meaningful, topic-specific question text.")
 
+        inp, out, tot = _extract_tokens(response)
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="generate-assessment",
+            input_tokens=inp,
+            output_tokens=out,
+            total_tokens=tot,
+            success=True,
+            model_used=_model_used(response),
+        )
         return assessment.model_dump()
 
     except HTTPException:
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="generate-assessment",
+            input_tokens=0, output_tokens=0, total_tokens=0,
+            success=False,
+        )
         raise
     except Exception as error:
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="generate-assessment",
+            input_tokens=0, output_tokens=0, total_tokens=0,
+            success=False, notes=str(error)[:200],
+        )
         raise_ai_error(error, "Assessment Generator")
 
 
@@ -892,7 +998,10 @@ Assessment Requirements:
 # Evaluate Assessment Endpoint
 # -----------------------------
 @app.post("/evaluate-assessment")
-def evaluate_assessment(request: EvaluateAssessmentRequest):
+def evaluate_assessment(
+    request: EvaluateAssessmentRequest,
+    x_user_id: Optional[str] = Header(default="anonymous", alias="X-User-Id"),
+):
     """Evaluate student answers to verify whether the topic is COMPLETED/VERIFIED or NEEDS_PRACTICE."""
     submitted_ids = [submission.question_id for submission in request.submissions]
     if len(set(submitted_ids)) != len(submitted_ids):
@@ -958,6 +1067,8 @@ EVALUATION RULES:
 8. Keep 'passed' and 'status' consistent with the 65 point threshold and provide constructive, encouraging, actionable feedback tied to this task.
 """
 
+    safe_user_id = re.sub(r"[^A-Za-z0-9\-]", "", (x_user_id or "anonymous"))[:64] or "anonymous"
+
     try:
         response = call_gemini_with_fallback(
             client=client,
@@ -981,11 +1092,33 @@ EVALUATION RULES:
         evaluation.passed = evaluation.score >= 65
         evaluation.status = "VERIFIED" if evaluation.passed else "NEEDS_PRACTICE"
 
+        inp, out, tot = _extract_tokens(response)
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="evaluate-assessment",
+            input_tokens=inp,
+            output_tokens=out,
+            total_tokens=tot,
+            success=True,
+            model_used=_model_used(response),
+        )
         return evaluation.model_dump()
 
     except HTTPException:
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="evaluate-assessment",
+            input_tokens=0, output_tokens=0, total_tokens=0,
+            success=False,
+        )
         raise
     except Exception as error:
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="evaluate-assessment",
+            input_tokens=0, output_tokens=0, total_tokens=0,
+            success=False, notes=str(error)[:200],
+        )
         raise_ai_error(error, "Assessment Evaluator")
 
 
@@ -993,7 +1126,10 @@ EVALUATION RULES:
 # Ask BuildReady Chatbot Endpoint
 # -----------------------------
 @app.post("/chat")
-def chat(request: ChatRequest):
+def chat(
+    request: ChatRequest,
+    x_user_id: Optional[str] = Header(default="anonymous", alias="X-User-Id"),
+):
     """Context-aware AI mentor connected directly to student roadmap and topic verification."""
     client = get_gemini_client()
 
@@ -1037,6 +1173,8 @@ MENTOR GUIDELINES & ROADMAP INTERACTION:
 7. Keep answers concise, clear, and inspiring.
 """
 
+    safe_user_id = re.sub(r"[^A-Za-z0-9\-]", "", (x_user_id or "anonymous"))[:64] or "anonymous"
+
     try:
         response = call_gemini_with_fallback(
             client=client,
@@ -1048,15 +1186,103 @@ MENTOR GUIDELINES & ROADMAP INTERACTION:
 
         reply_raw = response.text.strip() if response.text else "I am here to guide and verify your learning. What would you like to explore?"
 
+        inp, out, tot = _extract_tokens(response)
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="chat",
+            input_tokens=inp,
+            output_tokens=out,
+            total_tokens=tot,
+            success=True,
+            model_used=_model_used(response),
+        )
         return {
             "reply": reply_raw,
             "topic_update": None
         }
 
     except HTTPException:
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="chat",
+            input_tokens=0, output_tokens=0, total_tokens=0,
+            success=False,
+        )
         raise
     except Exception as error:
+        tracker.record_usage(
+            user_id=safe_user_id,
+            feature="chat",
+            input_tokens=0, output_tokens=0, total_tokens=0,
+            success=False, notes=str(error)[:200],
+        )
         raise_ai_error(error, "Ask BuildReady")
+
+
+# =============================================================================
+# FOUNDER-ONLY DASHBOARD ENDPOINTS
+# =============================================================================
+# Protected by a secret key sent as the X-Founder-Key header.
+# Set FOUNDER_SECRET_KEY in backend/.env (never committed to git).
+# The frontend dashboard page reads ONLY from these endpoints.
+# Normal students never see or call these endpoints.
+
+def _check_founder_key(key: Optional[str]) -> None:
+    """Raise 403 if the provided founder key does not match the configured secret."""
+    expected = os.getenv("FOUNDER_SECRET_KEY", "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Founder dashboard is not configured. Set FOUNDER_SECRET_KEY in backend/.env."
+        )
+    if not key or key.strip() != expected:
+        raise HTTPException(status_code=403, detail="Invalid founder secret key.")
+
+
+@app.get("/founder/stats")
+def founder_stats(
+    period: str = "all",
+    x_founder_key: Optional[str] = Header(default=None, alias="X-Founder-Key"),
+):
+    """
+    Founder-only: return aggregated real usage statistics.
+    period must be one of: today | 7d | 30d | all
+    Protected by X-Founder-Key header — never exposed to students.
+    """
+    _check_founder_key(x_founder_key)
+    if period not in ("today", "7d", "30d", "all"):
+        period = "all"
+    return tracker.get_summary(period)
+
+
+@app.get("/founder/users")
+def founder_users(
+    period: str = "all",
+    x_founder_key: Optional[str] = Header(default=None, alias="X-Founder-Key"),
+):
+    """
+    Founder-only: return per-user real usage statistics.
+    Returns an empty list when no data has been recorded — no fake users.
+    Protected by X-Founder-Key header.
+    """
+    _check_founder_key(x_founder_key)
+    if period not in ("today", "7d", "30d", "all"):
+        period = "all"
+    return tracker.get_per_user_stats(period)
+
+
+@app.get("/founder/events")
+def founder_events(
+    limit: int = 50,
+    x_founder_key: Optional[str] = Header(default=None, alias="X-Founder-Key"),
+):
+    """
+    Founder-only: return the most recent raw usage events (up to 100).
+    Useful for debugging and verifying that real token values are being captured.
+    """
+    _check_founder_key(x_founder_key)
+    limit = min(max(1, limit), 100)
+    return tracker.get_recent_events(limit)
 
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="frontend-assets")

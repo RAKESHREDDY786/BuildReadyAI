@@ -14,3 +14,7 @@ venv/
 # IDE / Editor
 .vscode/
 .idea/
+
+# Local databases
+*.db
+backend/usage.db
