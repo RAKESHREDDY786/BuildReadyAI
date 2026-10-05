@@ -121,7 +121,12 @@ async function loadData() {
         updateEventsTable(events);
     } catch (error) {
         console.error("Failed to load data:", error);
-        alert("Failed to load data. Please check your connection and try again.");
+        if (error.message && (error.message.includes("403") || error.message.toLowerCase().includes("invalid founder"))) {
+            handleLogout();
+            showError("Session expired or invalid founder key. Please log in again.");
+        } else {
+            alert(error.message || "Failed to load data. Please check your connection and try again.");
+        }
     } finally {
         showLoading(false);
     }
