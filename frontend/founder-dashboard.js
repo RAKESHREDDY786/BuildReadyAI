@@ -68,7 +68,7 @@ async function handleLogin(e) {
         sessionStorage.setItem(STORAGE_KEY, key);
         showDashboard(key);
     } catch (error) {
-        showError("Invalid founder secret key. Please try again.");
+        showError(error.message || "Invalid founder secret key. Please try again.");
         founderKeyInput.disabled = false;
         e.target.querySelector("button").disabled = false;
     }

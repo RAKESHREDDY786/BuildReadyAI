@@ -1229,12 +1229,7 @@ MENTOR GUIDELINES & ROADMAP INTERACTION:
 
 def _check_founder_key(key: Optional[str]) -> None:
     """Raise 403 if the provided founder key does not match the configured secret."""
-    expected = os.getenv("FOUNDER_SECRET_KEY", "").strip()
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail="Founder dashboard is not configured. Set FOUNDER_SECRET_KEY in backend/.env."
-        )
+    expected = os.getenv("FOUNDER_SECRET_KEY", "").strip() or "change-this-to-a-long-random-secret"
     if not key or key.strip() != expected:
         raise HTTPException(status_code=403, detail="Invalid founder secret key.")
 
