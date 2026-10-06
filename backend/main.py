@@ -1,3 +1,4 @@
+import hmac
 import os
 import logging
 import re
@@ -170,7 +171,10 @@ def validate_plan_curriculum(
             )
 
 
-cors_origins_raw = os.getenv("CORS_ALLOW_ORIGINS", "*")
+cors_origins_raw = os.getenv(
+    "CORS_ALLOW_ORIGINS",
+    "http://localhost:5500,http://127.0.0.1:5500,http://localhost:3000,http://127.0.0.1:3000",
+)
 if cors_origins_raw.strip() == "*":
     cors_origins = ["*"]
 else:
@@ -1223,20 +1227,28 @@ MENTOR GUIDELINES & ROADMAP INTERACTION:
 # FOUNDER-ONLY DASHBOARD ENDPOINTS
 # =============================================================================
 # Protected by a secret key sent as the X-Founder-Key header.
-# Set FOUNDER_SECRET_KEY in backend/.env (never committed to git).
+# Set FOUNDER_SECRET_KEY in backend/.env locally or in the Render environment (never committed to git).
 # The frontend dashboard page reads ONLY from these endpoints.
 # Normal students never see or call these endpoints.
 
+FOUNDER_KEY_PLACEHOLDERS = {"change-this-to-a-long-random-secret"}
+
+
+def _normalize_founder_key(value: Optional[str]) -> str:
+    return (value or "").strip().strip('"').strip("'").strip()
+
+
 def _check_founder_key(key: Optional[str]) -> None:
-    """Raise 403 if the provided founder key does not match the configured secret."""
-    if not key:
-        raise HTTPException(status_code=403, detail="Invalid founder secret key.")
+    """Raise 503 if no founder secret is configured, 403 if the provided key does not match."""
+    expected = _normalize_founder_key(os.getenv("FOUNDER_SECRET_KEY"))
+    if not expected or expected in FOUNDER_KEY_PLACEHOLDERS:
+        raise HTTPException(
+            status_code=503,
+            detail="Founder dashboard is not configured. Set FOUNDER_SECRET_KEY on the server.",
+        )
 
-    provided = key.strip().strip('"').strip("'")
-    env_secret = os.getenv("FOUNDER_SECRET_KEY", "").strip().strip('"').strip("'")
-    valid_keys = {k for k in [env_secret, "change-this-to-a-long-random-secret"] if k}
-
-    if provided not in valid_keys:
+    provided = _normalize_founder_key(key)
+    if not provided or not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid founder secret key.")
 
 

@@ -1125,5 +1125,44 @@ class BuildReadyWorkflowTests(unittest.TestCase):
         ).headers)
 
 
+    def test_founder_endpoints_require_configured_secret(self):
+        endpoints = ["/founder/stats", "/founder/users", "/founder/events"]
+        with patch.dict("os.environ", {"FOUNDER_SECRET_KEY": "test-founder-key"}):
+            for endpoint in endpoints:
+                self.assertEqual(
+                    self.client.get(endpoint, headers={"X-Founder-Key": "test-founder-key"}).status_code,
+                    200,
+                )
+                self.assertEqual(
+                    self.client.get(endpoint, headers={"X-Founder-Key": " 'test-founder-key' "}).status_code,
+                    200,
+                )
+                self.assertEqual(self.client.get(endpoint, headers={"X-Founder-Key": "wrong"}).status_code, 403)
+                self.assertEqual(self.client.get(endpoint).status_code, 403)
+                self.assertEqual(self.client.get(endpoint, headers={"X-Founder-Key": "  "}).status_code, 403)
+                self.assertEqual(
+                    self.client.get(
+                        endpoint, headers={"X-Founder-Key": "change-this-to-a-long-random-secret"}
+                    ).status_code,
+                    403,
+                )
+
+    def test_founder_endpoints_reject_unset_or_placeholder_secret(self):
+        for configured in ("", "change-this-to-a-long-random-secret"):
+            with patch.dict("os.environ", {"FOUNDER_SECRET_KEY": configured}):
+                response = self.client.get(
+                    "/founder/stats", headers={"X-Founder-Key": "change-this-to-a-long-random-secret"}
+                )
+                self.assertEqual(response.status_code, 503)
+
+    def test_frontend_scripts_do_not_redeclare_shared_globals(self):
+        root = Path(__file__).resolve().parents[1] / "frontend"
+        declaration = re.compile(r"^(?:const|let|class)\s+([A-Za-z_$][\w$]*)", flags=re.MULTILINE)
+        config_globals = set(declaration.findall((root / "config.js").read_text(encoding="utf-8")))
+        for page_script in ("script.js", "founder-dashboard.js"):
+            page_globals = set(declaration.findall((root / page_script).read_text(encoding="utf-8")))
+            self.assertFalse(config_globals & page_globals, f"{page_script} redeclares a config.js global")
+
+
 if __name__ == "__main__":
     unittest.main()
