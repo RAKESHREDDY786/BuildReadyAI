@@ -1138,8 +1138,8 @@ class BuildReadyWorkflowTests(unittest.TestCase):
                     200,
                 )
                 self.assertEqual(self.client.get(endpoint, headers={"X-Founder-Key": "wrong"}).status_code, 403)
-                self.assertEqual(self.client.get(endpoint).status_code, 403)
-                self.assertEqual(self.client.get(endpoint, headers={"X-Founder-Key": "  "}).status_code, 403)
+                self.assertEqual(self.client.get(endpoint).status_code, 401)
+                self.assertEqual(self.client.get(endpoint, headers={"X-Founder-Key": "  "}).status_code, 401)
                 self.assertEqual(
                     self.client.get(
                         endpoint, headers={"X-Founder-Key": "change-this-to-a-long-random-secret"}

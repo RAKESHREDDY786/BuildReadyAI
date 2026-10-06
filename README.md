@@ -72,7 +72,7 @@ For a local FastAPI deployment, set `GEMINI_API_KEY` in `backend/.env` or the ro
 The founder-only usage dashboard lives at `/founder-dashboard.html` and calls `GET /founder/stats`, `/founder/users`, and `/founder/events` with the `X-Founder-Key` header.
 
 - Set `FOUNDER_SECRET_KEY` to a long random value in `backend/.env` locally, and in the Render service's **Environment** settings for production (`render.yaml` declares it with `sync: false`, so Render never stores it in Git). Redeploy after changing it.
-- The endpoints return `503` when `FOUNDER_SECRET_KEY` is unset or still set to the `.env.example` placeholder, `403` for a missing or wrong key, and `200` for the configured key. There is no built-in default key.
+- The endpoints return `503` when `FOUNDER_SECRET_KEY` is unset or still set to the `.env.example` placeholder, `401` for a missing key, `403` for a wrong key, and `200` for the configured key. `GET /health` reports `founder_dashboard_configured` (true/false, never the value). There is no built-in default key.
 
 ---
 

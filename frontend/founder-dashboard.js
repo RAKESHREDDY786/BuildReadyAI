@@ -121,9 +121,9 @@ async function loadData() {
         updateEventsTable(events);
     } catch (error) {
         console.error("Failed to load data:", error);
-        if (error.message && (error.message.includes("403") || error.message.toLowerCase().includes("invalid founder"))) {
+        if (error.status === 401 || error.status === 403 || error.status === 503) {
             handleLogout();
-            showError("Session expired or invalid founder key. Please log in again.");
+            showError(error.status === 503 ? error.message : "Session expired or invalid founder key. Please log in again.");
         } else {
             alert(error.message || "Failed to load data. Please check your connection and try again.");
         }
@@ -147,7 +147,9 @@ async function fetchWithAuth(path, key) {
     if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         const message = typeof data.detail === "string" ? data.detail : `HTTP ${response.status}: ${response.statusText}`;
-        throw new Error(message);
+        const error = new Error(message);
+        error.status = response.status;
+        throw error;
     }
 
     return response.json();

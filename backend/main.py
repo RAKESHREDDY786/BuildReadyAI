@@ -13,7 +13,10 @@ from fastapi.staticfiles import StaticFiles
 from google import genai
 from pydantic import BaseModel, Field, model_validator
 
-import tracker
+try:
+    from backend import tracker
+except ImportError:  # running from inside backend/
+    import tracker
 
 # -----------------------------
 # Secure environment loading
@@ -568,7 +571,8 @@ def health():
         "gemini_configured": bool(
             os.getenv("GEMINI_API_KEY")
             and os.getenv("GEMINI_API_KEY").strip() not in ("", "your_key_here", "MY_REAL_KEY")
-        )
+        ),
+        "founder_dashboard_configured": _founder_secret() is not None,
     }
 
 
@@ -1251,17 +1255,28 @@ def _normalize_founder_key(value: Optional[str]) -> str:
     return (value or "").strip().strip('"').strip("'").strip()
 
 
+def _founder_secret() -> Optional[str]:
+    """Return the configured founder secret, or None if unset or still a placeholder."""
+    secret = _normalize_founder_key(os.getenv("FOUNDER_SECRET_KEY"))
+    if not secret or secret in FOUNDER_KEY_PLACEHOLDERS:
+        return None
+    return secret
+
+
 def _check_founder_key(key: Optional[str]) -> None:
-    """Raise 503 if no founder secret is configured, 403 if the provided key does not match."""
-    expected = _normalize_founder_key(os.getenv("FOUNDER_SECRET_KEY"))
-    if not expected or expected in FOUNDER_KEY_PLACEHOLDERS:
+    """Raise 503 if no founder secret is configured, 401 if no key is sent, 403 if it does not match."""
+    expected = _founder_secret()
+    if expected is None:
+        logger.error("Founder dashboard request rejected: FOUNDER_SECRET_KEY is not configured.")
         raise HTTPException(
             status_code=503,
             detail="Founder dashboard is not configured. Set FOUNDER_SECRET_KEY on the server.",
         )
 
     provided = _normalize_founder_key(key)
-    if not provided or not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
+    if not provided:
+        raise HTTPException(status_code=401, detail="Founder secret key is required.")
+    if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid founder secret key.")
 
 
