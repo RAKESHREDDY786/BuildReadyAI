@@ -1253,6 +1253,8 @@ FOUNDER_KEY_PLACEHOLDERS = {"change-this-to-a-long-random-secret"}
 
 
 FOUNDER_ENV_NAME = "FOUNDER_SECRET_KEY"
+# Common misspelling seen in the Render dashboard; accepted so the dashboard still works.
+FOUNDER_ENV_ALIASES = {FOUNDER_ENV_NAME, "FOUNDER_SECRECT_KEY"}
 
 
 def _normalize_founder_key(value: Optional[str]) -> str:
@@ -1268,7 +1270,7 @@ def _founder_env_source() -> Optional[str]:
     if os.environ.get(FOUNDER_ENV_NAME, "").strip():
         return FOUNDER_ENV_NAME
     for name in os.environ:
-        if name.strip().upper() == FOUNDER_ENV_NAME and os.environ[name].strip():
+        if name.strip().upper() in FOUNDER_ENV_ALIASES and os.environ[name].strip():
             return name
     return None
 

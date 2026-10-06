@@ -1175,6 +1175,7 @@ class BuildReadyWorkflowTests(unittest.TestCase):
         cases = [
             {"FOUNDER_SECRET_KEY": "FOUNDER_SECRET_KEY=abc-secret-1"},
             {"FOUNDER_SECRET_KEY ": "abc-secret-1"},
+            {"FOUNDER_SECRECT_KEY": "abc-secret-1"},
             {"founder_secret_key": "\"abc-secret-1\"\n"},
         ]
         for env in cases:
