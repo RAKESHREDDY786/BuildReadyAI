@@ -1193,5 +1193,56 @@ class BuildReadyWorkflowTests(unittest.TestCase):
                 )
 
 
+    def test_founder_stats_filter_by_period(self):
+        import sqlite3, tempfile
+        from datetime import datetime, timedelta, timezone
+        tracker = api.tracker
+        with tempfile.TemporaryDirectory() as tmp, patch.object(tracker, "DB_PATH", Path(tmp) / "usage.db"), \
+                patch.dict("os.environ", {"FOUNDER_SECRET_KEY": "period-test-key"}):
+            tracker.init_db()
+            now = datetime.now(timezone.utc)
+            rows = [  # (user, age, input, output)
+                ("u-now", timedelta(minutes=1), 10, 5),
+                ("u-3d", timedelta(days=3), 100, 50),
+                ("u-20d", timedelta(days=20), 1000, 500),
+                ("u-60d", timedelta(days=60), 10000, 5000),
+            ]
+            conn = sqlite3.connect(tracker.DB_PATH)
+            for user, age, inp, out in rows:
+                conn.execute(
+                    "INSERT INTO usage_events (user_id, timestamp, feature, input_tokens, output_tokens, total_tokens, success)"
+                    " VALUES (?, ?, 'generate_plan', ?, ?, ?, 1)",
+                    (user, (now - age).isoformat(), inp, out, inp + out),
+                )
+            conn.commit()
+            conn.close()
+            headers = {"X-Founder-Key": "period-test-key"}
+            expected = {
+                "today": (1, 10, 5),
+                "7d": (2, 110, 55),
+                "30d": (3, 1110, 555),
+                "all": (4, 11110, 5555),
+            }
+            for period, (count, inp, out) in expected.items():
+                stats = self.client.get(f"/founder/stats?period={period}", headers=headers).json()
+                self.assertEqual(
+                    (stats["total_requests"], stats["total_users"], stats["input_tokens"],
+                     stats["output_tokens"], stats["total_tokens"]),
+                    (count, count, inp, out, inp + out),
+                    period,
+                )
+                users = self.client.get(f"/founder/users?period={period}", headers=headers).json()
+                self.assertEqual(len(users), count, period)
+                events = self.client.get(f"/founder/events?period={period}", headers=headers).json()
+                self.assertEqual(len(events), count, period)
+
+    def test_today_uses_viewer_local_midnight(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 10, 6, 20, 0, tzinfo=timezone.utc)  # 01:30 on Oct 7 in IST
+        self.assertEqual(api.tracker.period_start("today", -330, now), datetime(2026, 10, 6, 18, 30, tzinfo=timezone.utc))
+        self.assertEqual(api.tracker.period_start("today", 0, now), datetime(2026, 10, 6, 0, 0, tzinfo=timezone.utc))
+        self.assertIsNone(api.tracker.period_start("all", 0, now))
+
+
 if __name__ == "__main__":
     unittest.main()

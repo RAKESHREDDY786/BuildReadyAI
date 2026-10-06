@@ -356,3 +356,10 @@ tbody tr:hover {
     color: var(--danger);
     font-weight: 600;
 }
+
+.data-range-note {
+    flex-basis: 100%;
+    margin: 0.5rem 0 0;
+    font-size: 0.85rem;
+    color: #5b6478;
+}

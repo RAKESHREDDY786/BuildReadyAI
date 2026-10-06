@@ -17,6 +17,7 @@ const logoutBtn = document.getElementById("logoutBtn");
 const periodSelect = document.getElementById("periodSelect");
 const refreshBtn = document.getElementById("refreshBtn");
 const loadingOverlay = document.getElementById("loadingOverlay");
+const dataRangeNoteEl = document.getElementById("dataRangeNote");
 
 // Summary card elements
 const totalUsersEl = document.getElementById("totalUsers");
@@ -112,10 +113,11 @@ async function loadData() {
     showLoading(true);
 
     try {
+        const query = `period=${encodeURIComponent(period)}&tz_offset=${new Date().getTimezoneOffset()}`;
         const [stats, users, events] = await Promise.all([
-            fetchWithAuth(`/founder/stats?period=${period}`, key),
-            fetchWithAuth(`/founder/users?period=${period}`, key),
-            fetchWithAuth("/founder/events?limit=50", key)
+            fetchWithAuth(`/founder/stats?${query}`, key),
+            fetchWithAuth(`/founder/users?${query}`, key),
+            fetchWithAuth(`/founder/events?limit=50&${query}`, key)
         ]);
 
         updateSummaryCards(stats);
@@ -159,6 +161,13 @@ async function fetchWithAuth(path, key) {
 
 // Update summary cards
 function updateSummaryCards(stats) {
+    if (dataRangeNoteEl) {
+        const since = stats.data_since ? formatTimestamp(stats.data_since) : null;
+        const from = stats.period_start ? formatTimestamp(stats.period_start) : "the beginning";
+        dataRangeNoteEl.textContent = since
+            ? `Showing usage from ${from} to now. Earliest recorded event: ${since}.`
+            : "No usage recorded yet.";
+    }
     totalUsersEl.textContent = formatNumber(stats.total_users);
     totalRequestsEl.textContent = formatNumber(stats.total_requests);
     inputTokensEl.textContent = formatNumber(stats.input_tokens);
