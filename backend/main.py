@@ -28,6 +28,7 @@ FRONTEND_DIR = ROOT_DIR / "frontend"
 load_dotenv(BASE_DIR / ".env")
 load_dotenv(ROOT_DIR / ".env")
 load_dotenv()  # fallback to current working directory
+load_dotenv("/etc/secrets/.env")  # Render "Secret Files" are mounted here
 
 # -----------------------------
 # FastAPI App
@@ -572,7 +573,7 @@ def health():
             os.getenv("GEMINI_API_KEY")
             and os.getenv("GEMINI_API_KEY").strip() not in ("", "your_key_here", "MY_REAL_KEY")
         ),
-        "founder_dashboard_configured": _founder_secret() is not None,
+        **founder_config_diagnostics(),
     }
 
 
@@ -1251,16 +1252,49 @@ MENTOR GUIDELINES & ROADMAP INTERACTION:
 FOUNDER_KEY_PLACEHOLDERS = {"change-this-to-a-long-random-secret"}
 
 
+FOUNDER_ENV_NAME = "FOUNDER_SECRET_KEY"
+
+
 def _normalize_founder_key(value: Optional[str]) -> str:
-    return (value or "").strip().strip('"').strip("'").strip()
+    value = (value or "").strip().strip('"').strip("'").strip()
+    # Tolerate the whole "FOUNDER_SECRET_KEY=..." line pasted as the value.
+    if value.upper().startswith(FOUNDER_ENV_NAME + "="):
+        value = value[len(FOUNDER_ENV_NAME) + 1:].strip().strip('"').strip("'").strip()
+    return value
+
+
+def _founder_env_source() -> Optional[str]:
+    """Name of the env var holding the founder secret (exact name first, then case/whitespace variants)."""
+    if os.environ.get(FOUNDER_ENV_NAME, "").strip():
+        return FOUNDER_ENV_NAME
+    for name in os.environ:
+        if name.strip().upper() == FOUNDER_ENV_NAME and os.environ[name].strip():
+            return name
+    return None
 
 
 def _founder_secret() -> Optional[str]:
     """Return the configured founder secret, or None if unset or still a placeholder."""
-    secret = _normalize_founder_key(os.getenv("FOUNDER_SECRET_KEY"))
+    source = _founder_env_source()
+    secret = _normalize_founder_key(os.environ.get(source)) if source else ""
     if not secret or secret in FOUNDER_KEY_PLACEHOLDERS:
         return None
     return secret
+
+
+def founder_config_diagnostics() -> dict:
+    """Non-secret diagnostics: env var names and booleans only, never values."""
+    source = _founder_env_source()
+    raw = os.environ.get(source, "") if source else ""
+    return {
+        "founder_dashboard_configured": _founder_secret() is not None,
+        "founder_env_var_found": source is not None,
+        "founder_env_var_name_exact": source == FOUNDER_ENV_NAME,
+        "founder_secret_is_placeholder": _normalize_founder_key(raw) in FOUNDER_KEY_PLACEHOLDERS,
+        "founder_secret_had_quotes_or_whitespace": bool(raw) and raw != raw.strip().strip('"').strip("'").strip(),
+        "founder_like_env_var_names": sorted(n for n in os.environ if "FOUNDER" in n.upper()),
+        "render_secret_file_present": Path("/etc/secrets/.env").exists(),
+    }
 
 
 def _check_founder_key(key: Optional[str]) -> None:

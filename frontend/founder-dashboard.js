@@ -37,6 +37,7 @@ const eventsTableBody = document.getElementById("eventsTableBody");
 
 // Initialize
 function init() {
+    localStorage.removeItem(STORAGE_KEY);
     const storedKey = sessionStorage.getItem(STORAGE_KEY);
     if (storedKey) {
         showDashboard(storedKey);
@@ -89,6 +90,7 @@ function showDashboard(key) {
 // Handle logout
 function handleLogout() {
     sessionStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY);
     dashboardContent.hidden = true;
     loginModal.hidden = false;
     founderKeyInput.value = "";

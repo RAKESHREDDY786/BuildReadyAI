@@ -1171,5 +1171,26 @@ class BuildReadyWorkflowTests(unittest.TestCase):
             self.assertFalse(config_globals & page_globals, f"{page_script} redeclares a config.js global")
 
 
+    def test_founder_secret_tolerates_misnamed_or_pasted_env_values(self):
+        cases = [
+            {"FOUNDER_SECRET_KEY": "FOUNDER_SECRET_KEY=abc-secret-1"},
+            {"FOUNDER_SECRET_KEY ": "abc-secret-1"},
+            {"founder_secret_key": "\"abc-secret-1\"\n"},
+        ]
+        for env in cases:
+            with patch.dict("os.environ", env, clear=False):
+                os_env = __import__("os").environ
+                os_env.pop("FOUNDER_SECRET_KEY", None) if "FOUNDER_SECRET_KEY" not in env else None
+                health = self.client.get("/health").json()
+                self.assertTrue(health["founder_dashboard_configured"], env.keys())
+                self.assertNotIn("abc-secret-1", json.dumps(health))
+                self.assertEqual(
+                    self.client.get("/founder/stats", headers={"X-Founder-Key": "abc-secret-1"}).status_code, 200
+                )
+                self.assertEqual(
+                    self.client.get("/founder/stats", headers={"X-Founder-Key": "wrong"}).status_code, 403
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
