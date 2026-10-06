@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -191,6 +191,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+FRONTEND_REVALIDATE_SUFFIXES = (".html", ".js", ".css")
+
+
+@app.middleware("http")
+async def revalidate_frontend_assets(request: Request, call_next):
+    """Make browsers revalidate frontend files so a redeploy is picked up immediately."""
+    response = await call_next(request)
+    path = request.url.path
+    if request.method in ("GET", "HEAD") and (path == "/" or path.endswith(FRONTEND_REVALIDATE_SUFFIXES)):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 
 # -----------------------------
 # Gemini Client & Model Config

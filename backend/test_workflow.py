@@ -1155,6 +1155,13 @@ class BuildReadyWorkflowTests(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 503)
 
+    def test_frontend_assets_are_revalidated_after_deploy(self):
+        for path in ("/", "/founder-dashboard.html", "/config.js", "/founder-dashboard.js", "/style.css"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertEqual(response.headers.get("cache-control"), "no-cache", path)
+        self.assertNotIn("cache-control", self.client.get("/health").headers)
+
     def test_frontend_scripts_do_not_redeclare_shared_globals(self):
         root = Path(__file__).resolve().parents[1] / "frontend"
         declaration = re.compile(r"^(?:const|let|class)\s+([A-Za-z_$][\w$]*)", flags=re.MULTILINE)
