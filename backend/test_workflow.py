@@ -1125,5 +1125,124 @@ class BuildReadyWorkflowTests(unittest.TestCase):
         ).headers)
 
 
+    def test_founder_endpoints_require_configured_secret(self):
+        endpoints = ["/founder/stats", "/founder/users", "/founder/events"]
+        with patch.dict("os.environ", {"FOUNDER_SECRET_KEY": "test-founder-key"}):
+            for endpoint in endpoints:
+                self.assertEqual(
+                    self.client.get(endpoint, headers={"X-Founder-Key": "test-founder-key"}).status_code,
+                    200,
+                )
+                self.assertEqual(
+                    self.client.get(endpoint, headers={"X-Founder-Key": " 'test-founder-key' "}).status_code,
+                    200,
+                )
+                self.assertEqual(self.client.get(endpoint, headers={"X-Founder-Key": "wrong"}).status_code, 403)
+                self.assertEqual(self.client.get(endpoint).status_code, 401)
+                self.assertEqual(self.client.get(endpoint, headers={"X-Founder-Key": "  "}).status_code, 401)
+                self.assertEqual(
+                    self.client.get(
+                        endpoint, headers={"X-Founder-Key": "change-this-to-a-long-random-secret"}
+                    ).status_code,
+                    403,
+                )
+
+    def test_founder_endpoints_reject_unset_or_placeholder_secret(self):
+        for configured in ("", "change-this-to-a-long-random-secret"):
+            with patch.dict("os.environ", {"FOUNDER_SECRET_KEY": configured}):
+                response = self.client.get(
+                    "/founder/stats", headers={"X-Founder-Key": "change-this-to-a-long-random-secret"}
+                )
+                self.assertEqual(response.status_code, 503)
+
+    def test_frontend_assets_are_revalidated_after_deploy(self):
+        for path in ("/", "/founder-dashboard.html", "/config.js", "/founder-dashboard.js", "/style.css"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertEqual(response.headers.get("cache-control"), "no-cache", path)
+        self.assertNotIn("cache-control", self.client.get("/health").headers)
+
+    def test_frontend_scripts_do_not_redeclare_shared_globals(self):
+        root = Path(__file__).resolve().parents[1] / "frontend"
+        declaration = re.compile(r"^(?:const|let|class)\s+([A-Za-z_$][\w$]*)", flags=re.MULTILINE)
+        config_globals = set(declaration.findall((root / "config.js").read_text(encoding="utf-8")))
+        for page_script in ("script.js", "founder-dashboard.js"):
+            page_globals = set(declaration.findall((root / page_script).read_text(encoding="utf-8")))
+            self.assertFalse(config_globals & page_globals, f"{page_script} redeclares a config.js global")
+
+
+    def test_founder_secret_tolerates_misnamed_or_pasted_env_values(self):
+        cases = [
+            {"FOUNDER_SECRET_KEY": "FOUNDER_SECRET_KEY=abc-secret-1"},
+            {"FOUNDER_SECRET_KEY ": "abc-secret-1"},
+            {"FOUNDER_SECRECT_KEY": "abc-secret-1"},
+            {"founder_secret_key": "\"abc-secret-1\"\n"},
+        ]
+        for env in cases:
+            with patch.dict("os.environ", env, clear=False):
+                os_env = __import__("os").environ
+                os_env.pop("FOUNDER_SECRET_KEY", None) if "FOUNDER_SECRET_KEY" not in env else None
+                health = self.client.get("/health").json()
+                self.assertTrue(health["founder_dashboard_configured"], env.keys())
+                self.assertNotIn("abc-secret-1", json.dumps(health))
+                self.assertEqual(
+                    self.client.get("/founder/stats", headers={"X-Founder-Key": "abc-secret-1"}).status_code, 200
+                )
+                self.assertEqual(
+                    self.client.get("/founder/stats", headers={"X-Founder-Key": "wrong"}).status_code, 403
+                )
+
+
+    def test_founder_stats_filter_by_period(self):
+        import sqlite3, tempfile
+        from datetime import datetime, timedelta, timezone
+        tracker = api.tracker
+        with tempfile.TemporaryDirectory() as tmp, patch.object(tracker, "DB_PATH", Path(tmp) / "usage.db"), \
+                patch.dict("os.environ", {"FOUNDER_SECRET_KEY": "period-test-key"}):
+            tracker.init_db()
+            now = datetime.now(timezone.utc)
+            rows = [  # (user, age, input, output)
+                ("u-now", timedelta(minutes=1), 10, 5),
+                ("u-3d", timedelta(days=3), 100, 50),
+                ("u-20d", timedelta(days=20), 1000, 500),
+                ("u-60d", timedelta(days=60), 10000, 5000),
+            ]
+            conn = sqlite3.connect(tracker.DB_PATH)
+            for user, age, inp, out in rows:
+                conn.execute(
+                    "INSERT INTO usage_events (user_id, timestamp, feature, input_tokens, output_tokens, total_tokens, success)"
+                    " VALUES (?, ?, 'generate_plan', ?, ?, ?, 1)",
+                    (user, (now - age).isoformat(), inp, out, inp + out),
+                )
+            conn.commit()
+            conn.close()
+            headers = {"X-Founder-Key": "period-test-key"}
+            expected = {
+                "today": (1, 10, 5),
+                "7d": (2, 110, 55),
+                "30d": (3, 1110, 555),
+                "all": (4, 11110, 5555),
+            }
+            for period, (count, inp, out) in expected.items():
+                stats = self.client.get(f"/founder/stats?period={period}", headers=headers).json()
+                self.assertEqual(
+                    (stats["total_requests"], stats["total_users"], stats["input_tokens"],
+                     stats["output_tokens"], stats["total_tokens"]),
+                    (count, count, inp, out, inp + out),
+                    period,
+                )
+                users = self.client.get(f"/founder/users?period={period}", headers=headers).json()
+                self.assertEqual(len(users), count, period)
+                events = self.client.get(f"/founder/events?period={period}", headers=headers).json()
+                self.assertEqual(len(events), count, period)
+
+    def test_today_uses_viewer_local_midnight(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 10, 6, 20, 0, tzinfo=timezone.utc)  # 01:30 on Oct 7 in IST
+        self.assertEqual(api.tracker.period_start("today", -330, now), datetime(2026, 10, 6, 18, 30, tzinfo=timezone.utc))
+        self.assertEqual(api.tracker.period_start("today", 0, now), datetime(2026, 10, 6, 0, 0, tzinfo=timezone.utc))
+        self.assertIsNone(api.tracker.period_start("all", 0, now))
+
+
 if __name__ == "__main__":
     unittest.main()

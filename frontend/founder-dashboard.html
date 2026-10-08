@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Founder Dashboard - BuildReady-AI</title>
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="style.css?v=20261008">
     <link rel="stylesheet" href="founder-dashboard.css?v=20261008">
 </head>
@@ -15,7 +16,7 @@
             <p>Enter your founder secret key to access usage statistics.</p>
             <form id="loginForm">
                 <label for="founderKey">Founder Secret Key</label>
-                <input type="password" id="founderKey" placeholder="Enter your secret key" required>
+                <input type="password" id="founderKey" placeholder="Enter your secret key" autocomplete="current-password" required>
                 <button type="submit">Access Dashboard</button>
             </form>
             <p id="loginError" class="error-message"></p>
@@ -157,7 +158,7 @@
         </div>
     </div>
 
-    <script src="config.js?v=20261008"></script>
+<script src="config.js?v=20261008"></script>
     <script src="founder-dashboard.js?v=20261008"></script>
 </body>
 </html>

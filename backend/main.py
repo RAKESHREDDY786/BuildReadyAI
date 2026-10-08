@@ -1,3 +1,4 @@
+import hmac
 import os
 import logging
 import re
@@ -5,14 +6,17 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from pydantic import BaseModel, Field, model_validator
 
-import tracker
+try:
+    from backend import tracker
+except ImportError:  # running from inside backend/
+    import tracker
 
 # -----------------------------
 # Secure environment loading
@@ -24,6 +28,7 @@ FRONTEND_DIR = ROOT_DIR / "frontend"
 load_dotenv(BASE_DIR / ".env")
 load_dotenv(ROOT_DIR / ".env")
 load_dotenv()  # fallback to current working directory
+load_dotenv("/etc/secrets/.env")  # Render "Secret Files" are mounted here
 
 # -----------------------------
 # FastAPI App
@@ -170,7 +175,10 @@ def validate_plan_curriculum(
             )
 
 
-cors_origins_raw = os.getenv("CORS_ALLOW_ORIGINS", "*")
+cors_origins_raw = os.getenv(
+    "CORS_ALLOW_ORIGINS",
+    "http://localhost:5500,http://127.0.0.1:5500,http://localhost:3000,http://127.0.0.1:3000",
+)
 if cors_origins_raw.strip() == "*":
     cors_origins = ["*"]
 else:
@@ -187,6 +195,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+FRONTEND_REVALIDATE_SUFFIXES = (".html", ".js", ".css")
+
+
+@app.middleware("http")
+async def revalidate_frontend_assets(request: Request, call_next):
+    """Make browsers revalidate frontend files so a redeploy is picked up immediately."""
+    response = await call_next(request)
+    path = request.url.path
+    if request.method in ("GET", "HEAD") and (path == "/" or path.endswith(FRONTEND_REVALIDATE_SUFFIXES)):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 
 # -----------------------------
 # Gemini Client & Model Config
@@ -551,7 +572,8 @@ def health():
         "gemini_configured": bool(
             os.getenv("GEMINI_API_KEY")
             and os.getenv("GEMINI_API_KEY").strip() not in ("", "your_key_here", "MY_REAL_KEY")
-        )
+        ),
+        **founder_config_diagnostics(),
     }
 
 
@@ -1223,21 +1245,82 @@ MENTOR GUIDELINES & ROADMAP INTERACTION:
 # FOUNDER-ONLY DASHBOARD ENDPOINTS
 # =============================================================================
 # Protected by a secret key sent as the X-Founder-Key header.
-# Set FOUNDER_SECRET_KEY in backend/.env (never committed to git).
+# Set FOUNDER_SECRET_KEY in backend/.env locally or in the Render environment (never committed to git).
 # The frontend dashboard page reads ONLY from these endpoints.
 # Normal students never see or call these endpoints.
 
+FOUNDER_KEY_PLACEHOLDERS = {"change-this-to-a-long-random-secret"}
+
+
+FOUNDER_ENV_NAME = "FOUNDER_SECRET_KEY"
+# Common misspelling seen in the Render dashboard; accepted so the dashboard still works.
+FOUNDER_ENV_ALIASES = {FOUNDER_ENV_NAME, "FOUNDER_SECRECT_KEY"}
+
+
+def _normalize_founder_key(value: Optional[str]) -> str:
+    value = (value or "").strip().strip('"').strip("'").strip()
+    # Tolerate the whole "FOUNDER_SECRET_KEY=..." line pasted as the value.
+    if value.upper().startswith(FOUNDER_ENV_NAME + "="):
+        value = value[len(FOUNDER_ENV_NAME) + 1:].strip().strip('"').strip("'").strip()
+    return value
+
+
+def _founder_env_source() -> Optional[str]:
+    """Name of the env var holding the founder secret (exact name first, then case/whitespace variants)."""
+    if os.environ.get(FOUNDER_ENV_NAME, "").strip():
+        return FOUNDER_ENV_NAME
+    for name in os.environ:
+        if name.strip().upper() in FOUNDER_ENV_ALIASES and os.environ[name].strip():
+            return name
+    return None
+
+
+def _founder_secret() -> Optional[str]:
+    """Return the configured founder secret, or None if unset or still a placeholder."""
+    source = _founder_env_source()
+    secret = _normalize_founder_key(os.environ.get(source)) if source else ""
+    if not secret or secret in FOUNDER_KEY_PLACEHOLDERS:
+        return None
+    return secret
+
+
+def founder_config_diagnostics() -> dict:
+    """Non-secret diagnostics: env var names and booleans only, never values."""
+    source = _founder_env_source()
+    raw = os.environ.get(source, "") if source else ""
+    return {
+        "founder_dashboard_configured": _founder_secret() is not None,
+        "founder_env_var_found": source is not None,
+        "founder_env_var_name_exact": source == FOUNDER_ENV_NAME,
+        "founder_secret_is_placeholder": _normalize_founder_key(raw) in FOUNDER_KEY_PLACEHOLDERS,
+        "founder_secret_had_quotes_or_whitespace": bool(raw) and raw != raw.strip().strip('"').strip("'").strip(),
+        "founder_like_env_var_names": sorted(n for n in os.environ if "FOUNDER" in n.upper()),
+        "render_secret_file_present": Path("/etc/secrets/.env").exists(),
+    }
+
+
 def _check_founder_key(key: Optional[str]) -> None:
-    """Raise 403 if the provided founder key does not match the configured secret."""
-    if not key:
+    """Raise 503 if no founder secret is configured, 401 if no key is sent, 403 if it does not match."""
+    expected = _founder_secret()
+    if expected is None:
+        logger.error("Founder dashboard request rejected: FOUNDER_SECRET_KEY is not configured.")
+        raise HTTPException(
+            status_code=503,
+            detail="Founder dashboard is not configured. Set FOUNDER_SECRET_KEY on the server.",
+        )
+
+    provided = _normalize_founder_key(key)
+    if not provided:
+        raise HTTPException(status_code=401, detail="Founder secret key is required.")
+    if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid founder secret key.")
 
-    provided = key.strip().strip('"').strip("'")
-    env_secret = os.getenv("FOUNDER_SECRET_KEY", "").strip().strip('"').strip("'")
-    valid_keys = {k for k in [env_secret, "change-this-to-a-long-random-secret"] if k}
 
-    if provided not in valid_keys:
-        raise HTTPException(status_code=403, detail="Invalid founder secret key.")
+def _founder_period(period: str, tz_offset: int) -> tuple[str, int]:
+    """Validate the dashboard period and clamp the browser timezone offset (minutes) to real-world bounds."""
+    if period not in tracker.PERIODS:
+        period = "all"
+    return period, min(max(tz_offset, -14 * 60), 14 * 60)
 
 
 def _founder_period(period: str, tz_offset: int) -> tuple[str, int]:
