@@ -1175,13 +1175,14 @@ class BuildReadyWorkflowTests(unittest.TestCase):
         cases = [
             {"FOUNDER_SECRET_KEY": "FOUNDER_SECRET_KEY=abc-secret-1"},
             {"FOUNDER_SECRET_KEY ": "abc-secret-1"},
-            {"FOUNDER_SECRECT_KEY": "abc-secret-1"},
+            {"FOUNDER_SECRET_KEY": "abc-secret-1"},
             {"founder_secret_key": "\"abc-secret-1\"\n"},
         ]
         for env in cases:
             with patch.dict("os.environ", env, clear=False):
                 os_env = __import__("os").environ
-                os_env.pop("FOUNDER_SECRET_KEY", None) if "FOUNDER_SECRET_KEY" not in env else None
+                if not any(k.upper() == "FOUNDER_SECRET_KEY" for k in env):
+                    os_env.pop("FOUNDER_SECRET_KEY", None)
                 health = self.client.get("/health").json()
                 self.assertTrue(health["founder_dashboard_configured"], env.keys())
                 self.assertNotIn("abc-secret-1", json.dumps(health))

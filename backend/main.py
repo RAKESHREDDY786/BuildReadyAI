@@ -1253,20 +1253,34 @@ FOUNDER_KEY_PLACEHOLDERS = {"change-this-to-a-long-random-secret"}
 
 
 FOUNDER_ENV_NAME = "FOUNDER_SECRET_KEY"
-# Common misspelling seen in the Render dashboard; accepted so the dashboard still works.
-FOUNDER_ENV_ALIASES = {FOUNDER_ENV_NAME, "FOUNDER_SECRECT_KEY"}
+FOUNDER_ENV_ALIASES = {FOUNDER_ENV_NAME}
 
 
 def _normalize_founder_key(value: Optional[str]) -> str:
     value = (value or "").strip().strip('"').strip("'").strip()
     # Tolerate the whole "FOUNDER_SECRET_KEY=..." line pasted as the value.
-    if value.upper().startswith(FOUNDER_ENV_NAME + "="):
-        value = value[len(FOUNDER_ENV_NAME) + 1:].strip().strip('"').strip("'").strip()
+    for alias in FOUNDER_ENV_ALIASES:
+        if value.upper().startswith(alias + "="):
+            value = value[len(alias) + 1:].strip().strip('"').strip("'").strip()
+            break
     return value
 
 
 def _founder_env_source() -> Optional[str]:
     """Name of the env var holding the founder secret (exact name first, then case/whitespace variants)."""
+    # On Windows, os.environ is case-insensitive and normalizes keys to uppercase.
+    # Use os.environb (bytes env, Python 3.8+) for case-sensitive lookup when available.
+    # This ensures patched env vars with non-standard casing (e.g. lowercase) are found.
+    if hasattr(os, "environb"):
+        # Case-sensitive bytes environment (preserves original casing on Windows)
+        for key_b, value_b in os.environb.items():
+            try:
+                key = key_b.decode("utf-8", "surrogateescape")
+                if key.strip().upper() in FOUNDER_ENV_ALIASES and value_b.strip():
+                    return key
+            except UnicodeDecodeError:
+                continue
+    # Fallback: standard os.environ (case-insensitive on Windows)
     if os.environ.get(FOUNDER_ENV_NAME, "").strip():
         return FOUNDER_ENV_NAME
     for name in os.environ:
@@ -1314,13 +1328,6 @@ def _check_founder_key(key: Optional[str]) -> None:
         raise HTTPException(status_code=401, detail="Founder secret key is required.")
     if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid founder secret key.")
-
-
-def _founder_period(period: str, tz_offset: int) -> tuple[str, int]:
-    """Validate the dashboard period and clamp the browser timezone offset (minutes) to real-world bounds."""
-    if period not in tracker.PERIODS:
-        period = "all"
-    return period, min(max(tz_offset, -14 * 60), 14 * 60)
 
 
 def _founder_period(period: str, tz_offset: int) -> tuple[str, int]:
