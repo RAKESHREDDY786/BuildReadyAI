@@ -1240,9 +1240,17 @@ def _check_founder_key(key: Optional[str]) -> None:
         raise HTTPException(status_code=403, detail="Invalid founder secret key.")
 
 
+def _founder_period(period: str, tz_offset: int) -> tuple[str, int]:
+    """Validate the dashboard period and clamp the browser timezone offset (minutes) to real-world bounds."""
+    if period not in tracker.PERIODS:
+        period = "all"
+    return period, min(max(tz_offset, -14 * 60), 14 * 60)
+
+
 @app.get("/founder/stats")
 def founder_stats(
     period: str = "all",
+    tz_offset: int = 0,
     x_founder_key: Optional[str] = Header(default=None, alias="X-Founder-Key"),
 ):
     """
@@ -1251,14 +1259,14 @@ def founder_stats(
     Protected by X-Founder-Key header — never exposed to students.
     """
     _check_founder_key(x_founder_key)
-    if period not in ("today", "7d", "30d", "all"):
-        period = "all"
-    return tracker.get_summary(period)
+    period, tz_offset = _founder_period(period, tz_offset)
+    return tracker.get_summary(period, tz_offset)
 
 
 @app.get("/founder/users")
 def founder_users(
     period: str = "all",
+    tz_offset: int = 0,
     x_founder_key: Optional[str] = Header(default=None, alias="X-Founder-Key"),
 ):
     """
@@ -1267,14 +1275,15 @@ def founder_users(
     Protected by X-Founder-Key header.
     """
     _check_founder_key(x_founder_key)
-    if period not in ("today", "7d", "30d", "all"):
-        period = "all"
-    return tracker.get_per_user_stats(period)
+    period, tz_offset = _founder_period(period, tz_offset)
+    return tracker.get_per_user_stats(period, tz_offset)
 
 
 @app.get("/founder/events")
 def founder_events(
     limit: int = 50,
+    period: str = "all",
+    tz_offset: int = 0,
     x_founder_key: Optional[str] = Header(default=None, alias="X-Founder-Key"),
 ):
     """
@@ -1283,7 +1292,8 @@ def founder_events(
     """
     _check_founder_key(x_founder_key)
     limit = min(max(1, limit), 100)
-    return tracker.get_recent_events(limit)
+    period, tz_offset = _founder_period(period, tz_offset)
+    return tracker.get_recent_events(limit, period, tz_offset)
 
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="frontend-assets")

@@ -13,7 +13,7 @@ import sqlite3
 import logging
 import os
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -126,24 +126,46 @@ def record_usage(
 # Query helpers used by the founder dashboard endpoints
 # ---------------------------------------------------------------------------
 
-def _period_filter(period: str) -> str:
-    """Return a SQL WHERE fragment for the requested time period."""
+PERIODS = ("today", "7d", "30d", "all")
+
+
+def period_start(period: str, tz_offset_minutes: int = 0, now: Optional[datetime] = None) -> Optional[datetime]:
+    """
+    UTC start of the requested period, or None for all time.
+    tz_offset_minutes follows JavaScript's Date.getTimezoneOffset() (UTC - local, e.g. -330 for IST),
+    so "today" means since local midnight for the founder viewing the dashboard.
+    """
+    now = now or datetime.now(timezone.utc)
     if period == "today":
-        return "DATE(timestamp) = DATE('now')"
+        local_now = now - timedelta(minutes=tz_offset_minutes)
+        local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return local_midnight + timedelta(minutes=tz_offset_minutes)
     if period == "7d":
-        return "timestamp >= DATETIME('now', '-7 days')"
+        return now - timedelta(days=7)
     if period == "30d":
-        return "timestamp >= DATETIME('now', '-30 days')"
-    return "1=1"   # all time
+        return now - timedelta(days=30)
+    return None
 
 
-def get_summary(period: str = "all") -> dict:
+def _period_filter(period: str, tz_offset_minutes: int = 0) -> tuple[str, tuple]:
+    """
+    Return a parameterised SQL WHERE fragment for the requested period.
+    Compares with julianday() so ISO-8601 timestamps ('T' separator, '+00:00' offset)
+    are compared as instants rather than as strings.
+    """
+    start = period_start(period, tz_offset_minutes)
+    if start is None:
+        return "1=1", ()
+    return "julianday(timestamp) >= julianday(?)", (start.isoformat(),)
+
+
+def get_summary(period: str = "all", tz_offset_minutes: int = 0) -> dict:
     """
     Return aggregate statistics for the requested period.
     All values are calculated from real database records.
     Returns zeros (not fake data) when the database is empty.
     """
-    where = _period_filter(period)
+    where, params = _period_filter(period, tz_offset_minutes)
     with _db() as conn:
         row = conn.execute(f"""
             SELECT
@@ -156,7 +178,7 @@ def get_summary(period: str = "all") -> dict:
                 SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) AS failed
             FROM usage_events
             WHERE {where}
-        """).fetchone()
+        """, params).fetchone()
 
         total_users    = row["total_users"]    or 0
         total_requests = row["total_requests"] or 0
@@ -176,10 +198,13 @@ def get_summary(period: str = "all") -> dict:
             WHERE {where}
             GROUP BY user_id
             ORDER BY tok DESC
-        """).fetchall()
+        """, params).fetchall()
 
         highest_user = {"user_id": top_users[0]["user_id"], "total_tokens": top_users[0]["tok"]} if top_users else None
         lowest_user  = {"user_id": top_users[-1]["user_id"], "total_tokens": top_users[-1]["tok"]} if top_users else None
+
+        data_since = conn.execute("SELECT MIN(timestamp) AS ts FROM usage_events").fetchone()["ts"]
+        start = period_start(period, tz_offset_minutes)
 
     return {
         "period":           period,
@@ -194,15 +219,17 @@ def get_summary(period: str = "all") -> dict:
         "avg_tokens_per_request": avg_per_request,
         "highest_usage_user":     highest_user,
         "lowest_usage_user":      lowest_user,
+        "period_start":           start.isoformat() if start else None,
+        "data_since":             data_since,
     }
 
 
-def get_per_user_stats(period: str = "all") -> list[dict]:
+def get_per_user_stats(period: str = "all", tz_offset_minutes: int = 0) -> list[dict]:
     """
     Return per-user aggregates for the requested period.
     Returns an empty list (not fake users) when no data has been recorded.
     """
-    where = _period_filter(period)
+    where, params = _period_filter(period, tz_offset_minutes)
     with _db() as conn:
         rows = conn.execute(f"""
             SELECT
@@ -216,18 +243,20 @@ def get_per_user_stats(period: str = "all") -> list[dict]:
             WHERE {where}
             GROUP BY user_id
             ORDER BY total_tokens DESC
-        """).fetchall()
+        """, params).fetchall()
     return [dict(r) for r in rows]
 
 
-def get_recent_events(limit: int = 50) -> list[dict]:
-    """Return the most recent raw usage events for the founder."""
+def get_recent_events(limit: int = 50, period: str = "all", tz_offset_minutes: int = 0) -> list[dict]:
+    """Return the most recent raw usage events for the founder within the requested period."""
+    where, params = _period_filter(period, tz_offset_minutes)
     with _db() as conn:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT id, user_id, timestamp, feature, input_tokens, output_tokens,
                    total_tokens, success, model_used, notes
             FROM usage_events
+            WHERE {where}
             ORDER BY id DESC
             LIMIT ?
-        """, (limit,)).fetchall()
+        """, (*params, limit)).fetchall()
     return [dict(r) for r in rows]
